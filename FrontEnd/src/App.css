@@ -1,0 +1,307 @@
+/* ==========================================================================
+   INSAF - same look as the Dashboard page (navy / bronze / gold)
+   Day mode + night mode through CSS variables
+   ========================================================================== */
+
+@keyframes ins-card-float-in { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ins-page-rise     { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ins-logo-in       { from { opacity: 0; letter-spacing: -2px; transform: scale(0.96); } to { opacity: 1; letter-spacing: normal; transform: scale(1); } }
+@keyframes ins-sublogo-in    { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ins-border-reveal { from { width: 0%; } to { width: 100%; } }
+@keyframes ins-scan-sweep    { 0% { left: -60%; opacity: 0.6; } 50% { opacity: 0.35; } 100% { left: 120%; opacity: 0; } }
+@keyframes ins-box-breathe {
+  0%, 100% { box-shadow: 0 6px 25px rgba(11, 31, 58, 0.3), inset 0 1px 0 rgba(212,175,55,0.15); }
+  50%      { box-shadow: 0 8px 35px rgba(11, 31, 58, 0.45), inset 0 1px 0 rgba(212,175,55,0.3); }
+}
+@keyframes ins-util-in       { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes ins-footer-rise   { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ins-label-shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+@keyframes ins-spin          { to { transform: rotate(360deg); } }
+
+body { margin: 0; }
+
+/* ── Theme variables ── */
+.ins-wrapper {
+  --bg: #F8F7F2;
+  --card: #ffffff;
+  --card-border: #D8D2C4;
+  --text: #0B1F3A;
+  --muted: #666666;
+  --row-line: #EEE9E0;
+  --head-line: #E2DAD0;
+  --chip-bg: #FDFCFA;
+  --chip-border: #CFC7B8;
+  --soft-bg: #FAF9F6;
+  --soft-border: #E5E0D6;
+  --footer-bg: #eeeeee;
+  --footer-border: #cccccc;
+  --footer-text: #666666;
+  --pattern-opacity: 0.15;
+  --shadow: rgba(0, 0, 0, 0.07);
+  --ok-text: #1f6b36;
+  --ko-text: #8b1a1a;
+  --commit: #3d6b3d;
+}
+.ins-wrapper.ins-dark {
+  --bg: #08111f;
+  --card: #0f1c31;
+  --card-border: #2a3a55;
+  --text: #E8E4D8;
+  --muted: #9aa6b8;
+  --row-line: #1f2d46;
+  --head-line: #2a3a55;
+  --chip-bg: #14233b;
+  --chip-border: #34476a;
+  --soft-bg: #13233d;
+  --soft-border: #2a3a55;
+  --footer-bg: #0b1627;
+  --footer-border: #1f2d46;
+  --footer-text: #8793a6;
+  --pattern-opacity: 0.07;
+  --shadow: rgba(0, 0, 0, 0.45);
+  --ok-text: #6fd08c;
+  --ko-text: #ff8a8a;
+  --commit: #7fd49a;
+}
+
+/* ── Global wrapper + same background pattern as the Dashboard ── */
+.ins-wrapper {
+  min-height: 100vh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  font-family: Arial, sans-serif;
+  position: relative;
+  overflow-x: hidden;
+  transition: background 0.4s ease;
+}
+.ins-wrapper::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background-image: url('./assets/3adela1.png');
+  background-repeat: repeat;
+  background-size: 200px;
+  opacity: var(--pattern-opacity);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ── Header ── */
+.ins-header { position: relative; background: #0B1F3A; padding: 8px 20px; color: white; z-index: 10; }
+.ins-header::after {
+  content: ""; position: absolute; bottom: 0; left: 0; width: 100%; height: 2px;
+  background: linear-gradient(to right, #8C6D3F, #D4AF37, #8C6D3F);
+}
+.ins-header-content { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; }
+.ins-gov-info { justify-self: start; }
+.ins-btn-intranet { justify-self: end; }
+.ins-welcome { text-align: center; }
+.ins-welcome p { margin: 0; font-family: "Georgia", "Times New Roman", serif; font-style: italic; }
+.ins-welcome-title { color: #D4AF37; font-size: 16px; font-weight: bold; letter-spacing: 0.5px; }
+.ins-welcome-sub { color: #8C6D3F; font-size: 12px; letter-spacing: 0.5px; margin-top: 2px !important; }
+.ins-gov-info { display: flex; align-items: center; gap: 12px; }
+.ins-tn-flag {
+  height: 35px; border-radius: 6px; object-fit: cover; border: 1.5px solid #8C6D3F; padding: 1px;
+  transition: box-shadow 0.3s ease;
+}
+.ins-tn-flag:hover { box-shadow: 0 0 10px rgba(212, 175, 55, 0.5); }
+.ins-gov-text p {
+  margin: 0; color: #8C6D3F; font-family: "Georgia", "Times New Roman", serif;
+  font-size: 13px; font-style: italic; letter-spacing: 0.5px;
+}
+.ins-title-country  { font-weight: bold; text-transform: uppercase; }
+.ins-title-ministry { text-transform: none; }
+.ins-btn-intranet {
+  background: #8C6D3F; color: white; border: none; padding: 10px 22px; border-radius: 4px;
+  font-weight: bold; font-size: 12px; cursor: default;
+}
+
+/* ── Main ── */
+.ins-main {
+  max-width: 1000px; margin: 20px auto; width: 100%; padding: 0 20px; box-sizing: border-box;
+  flex: 1; position: relative; z-index: 1;
+  animation: ins-page-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Branding ── */
+.ins-brand-header { text-align: center; margin: 20px 0 35px; }
+.ins-main-logo {
+  font-size: 42px; font-weight: 400; color: var(--text); margin: 0; font-family: "Georgia", serif;
+  animation: ins-logo-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+}
+.ins-main-logo span { color: #8C6D3F; font-weight: 600; }
+.ins-sub-logo {
+  font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 2.5px; margin-top: 8px;
+  animation: ins-sublogo-in 0.6s ease 0.35s both;
+}
+
+/* ── Utility bar ── */
+.ins-utility-bar {
+  display: flex; justify-content: space-between; align-items: center; width: 100%;
+  margin: 15px 0 25px; min-height: 36px; animation: ins-util-in 0.5s ease 0.3s both;
+}
+.ins-busy {
+  display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 4px;
+  background: #0B1F3A; border: 1.5px solid #8C6D3F; color: #D4AF37;
+  font-family: "Georgia", serif; font-style: italic; font-size: 12px; font-weight: bold;
+}
+.ins-spinner {
+  width: 14px; height: 14px; border: 2px solid rgba(212,175,55,0.3); border-top-color: #D4AF37;
+  border-radius: 50%; animation: ins-spin 0.7s linear infinite;
+}
+.ins-synthetic-tag { font-size: 14px; font-weight: bold; color: var(--text); }
+
+/* ── Student box (navy, breathing glow, scan line) ── */
+.ins-student-box {
+  background: linear-gradient(135deg, #0B1F3A 0%, #0f2847 60%, #0B1F3A 100%);
+  border: 1px solid #8C6D3F; border-radius: 8px; padding: 22px 28px; margin-bottom: 30px;
+  position: relative; overflow: hidden; animation: ins-box-breathe 4s ease-in-out infinite;
+}
+.ins-student-box::before {
+  content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+  background: linear-gradient(to right, #8C6D3F, #D4AF37, #8C6D3F);
+}
+.ins-student-box::after {
+  content: ""; position: absolute; top: 0; left: -60%; width: 50%; height: 100%;
+  background: linear-gradient(105deg, transparent 20%, rgba(212,175,55,0.12) 50%, transparent 80%);
+  pointer-events: none; animation: ins-scan-sweep 1.4s cubic-bezier(0.4, 0, 0.2, 1) 0.4s both;
+}
+.ins-info-section { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.ins-info-col { width: 50%; }
+.ins-info-label {
+  display: block; color: #D4AF37; font-weight: bold; font-size: 11px; font-family: "Georgia", serif;
+  font-style: italic; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
+}
+.ins-info-value { font-size: 13px; display: block; color: #ffffff; font-weight: 500; letter-spacing: 0.3px; word-break: break-all; }
+.ins-info-separator {
+  height: 1px; margin: 14px 0; opacity: 0.6;
+  background: linear-gradient(to right, transparent, #8C6D3F, #D4AF37, #8C6D3F, transparent);
+}
+
+/* ── White (or night) content card ── */
+.ins-content-card {
+  background: var(--card); border: 1px solid var(--card-border); border-radius: 4px;
+  box-shadow: 0 12px 40px var(--shadow); position: relative; overflow: visible; padding-bottom: 10px;
+  animation: ins-card-float-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.25s both;
+  transition: background 0.4s ease, border-color 0.4s ease;
+}
+.ins-content-card::before {
+  content: ""; position: absolute; top: 0; left: 0; height: 3px; width: 0%;
+  background: linear-gradient(to right, #8C6D3F, #D4AF37, #8C6D3F); border-radius: 4px 4px 0 0;
+  animation: ins-border-reveal 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.5s both;
+}
+
+/* ── Sections inside the card ── */
+.ins-section { padding: 30px 36px; border-bottom: 1px solid var(--head-line); }
+.ins-section:last-of-type { border-bottom: none; }
+.ins-section-title {
+  font-family: "Georgia", serif; font-size: 20px; font-style: italic; font-weight: bold; margin: 0 0 6px;
+  background: linear-gradient(to right, #8C6D3F, #D4AF37, #8C6D3F);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  display: inline-block;
+}
+.ins-text { font-size: 13px; color: var(--muted); margin: 0 0 16px; line-height: 1.5; }
+.ins-label {
+  font-size: 10.5px; font-weight: bold; color: var(--text); text-transform: uppercase;
+  letter-spacing: 0.9px; margin: 0 0 10px;
+}
+
+/* ── Program chips ── */
+.ins-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.ins-chip {
+  padding: 10px 16px; border: 1px solid var(--chip-border); border-radius: 12px; background: var(--chip-bg);
+  font-family: Arial, sans-serif; font-size: 13px; color: var(--text); cursor: pointer;
+  transition: background 0.3s, border-color 0.3s, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s;
+}
+.ins-chip:hover { background: rgba(212,175,55,0.1); border-color: #8C6D3F; transform: translateY(-4px); box-shadow: 0 10px 22px rgba(140,109,63,0.2); }
+.ins-chip:active { transform: translateY(-1px) scale(0.97); transition-duration: 0.1s; }
+.ins-chip.selected { background: #0B1F3A; color: #D4AF37; border-color: #D4AF37; font-weight: bold; }
+
+/* ── Buttons ── */
+.ins-btn {
+  background: #0B1F3A; border: 1.5px solid #8C6D3F; color: #D4AF37; padding: 10px 20px; border-radius: 4px;
+  font-size: 12px; font-weight: bold; font-family: "Georgia", serif; font-style: italic; letter-spacing: 0.3px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ins-btn:hover:not(:disabled) { background: #8C6D3F; color: #fff; border-color: #D4AF37; transform: translateY(-3px); box-shadow: 0 8px 20px rgba(140,109,63,0.35); }
+.ins-btn:active:not(:disabled) { transform: translateY(-1px); transition-duration: 0.1s; }
+.ins-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.ins-btn.danger { background: #5e1212; border-color: #dc3232; color: #ffd0d0; }
+.ins-btn.danger:hover:not(:disabled) { background: #dc3232; border-color: #ff8a8a; box-shadow: 0 8px 20px rgba(220,50,50,0.35); }
+
+/* ── Receipt ── */
+.ins-receipt {
+  margin-top: 18px; background: #0B1F3A; color: #D4AF37; border-left: 3px solid #D4AF37; border-radius: 4px;
+  padding: 14px 16px; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all;
+}
+
+/* ── Commitments + table ── */
+.ins-commit { font-size: 13px; color: var(--commit); margin: 8px 0 0; }
+.ins-table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 13px; }
+.ins-table th {
+  text-align: left; font-size: 10.5px; font-weight: bold; color: #8C6D3F; text-transform: uppercase;
+  letter-spacing: 0.9px; padding: 8px; border-bottom: 2px solid var(--head-line);
+}
+.ins-table td { padding: 8px; border-bottom: 1px solid var(--row-line); color: var(--text); }
+.ins-table .c { text-align: center; }
+.ins-placed {
+  margin-top: 14px; padding: 12px 14px; background: var(--soft-bg); border: 1px solid var(--soft-border);
+  border-radius: 4px; font-size: 14px; color: var(--text);
+}
+.ins-placed b { color: #8C6D3F; }
+
+/* ── Verification result ── */
+.ins-result { margin-top: 18px; padding: 16px; border-radius: 4px; }
+.ins-result.ok { background: rgba(40,140,70,0.10); border: 1px solid rgba(40,140,70,0.35); border-left: 3px solid #288c46; }
+.ins-result.ko { background: rgba(220,50,50,0.09); border: 1px solid rgba(220,50,50,0.3); border-left: 3px solid #dc3232; }
+.ins-result h2 { font-family: "Georgia", serif; font-size: 22px; margin: 0 0 12px; }
+.ins-result.ok h2 { color: var(--ok-text); }
+.ins-result.ko h2 { color: var(--ko-text); }
+.ins-check { font-size: 14px; color: var(--text); padding: 5px 0; }
+
+/* ── Round toggles (language + theme), same style as the Dashboard ── */
+.ins-round-btn {
+  position: absolute; bottom: -25px; width: 50px; height: 50px; background: #0B1F3A; color: #ffffff;
+  border: 2px solid #8C6D3F; border-radius: 50%; font-weight: bold; font-size: 12px; cursor: pointer; z-index: 100;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.ins-round-btn:hover { background-color: #8C6D3F; transform: scale(1.1); box-shadow: 0 0 15px rgba(140,109,63,0.5); }
+.ins-lang-btn  { right: 20px; }
+
+/* Theme button: same as Themetogglebutton.css (top-left of the card) */
+.ins-theme-btn {
+  position: absolute; top: -25px; left: 20px; width: 50px; height: 50px; background: #ffffff;
+  border: 2px solid #8C6D3F; border-radius: 50%; cursor: pointer; z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 0; overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.ins-theme-btn:hover { background-color: #8C6D3F; transform: scale(1.1); box-shadow: 0 0 15px rgba(140, 109, 63, 0.5); }
+.ins-theme-icon { width: 28px; height: 28px; object-fit: cover; border-radius: 50%; display: block; pointer-events: none; }
+
+/* ── Footer ── */
+.ins-footer {
+  text-align: center; padding: 30px; background: var(--footer-bg); border-top: 1px solid var(--footer-border);
+  margin-top: 55px; animation: ins-footer-rise 0.6s ease 1s both; position: relative; z-index: 1;
+  transition: background 0.4s ease;
+}
+.ins-footer p { font-size: 11px; color: var(--footer-text); margin: 0; }
+.ins-footer strong { color: #8C6D3F; }
+
+/* ── Respect reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .ins-wrapper *, .ins-wrapper *::before, .ins-wrapper *::after { animation: none !important; transition: none !important; }
+}
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+  .ins-header { padding: 8px 16px; }
+  .ins-btn-intranet, .ins-welcome { display: none; }
+  .ins-header-content { grid-template-columns: 1fr; }
+  .ins-main-logo { font-size: 32px; }
+  .ins-section { padding: 22px 18px; }
+  .ins-info-section { flex-direction: column; }
+  .ins-info-col { width: 100%; }
+}
