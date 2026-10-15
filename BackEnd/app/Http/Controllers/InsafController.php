@@ -11,22 +11,39 @@ use Illuminate\Http\Request;
 
 class InsafController extends Controller
 {
-    // List of programs with seats and cut-offs
+    // PUBLIC: list of programs with seats and published cut-offs
     public function programs()
     {
         return Program::orderBy('id')->get();
     }
 
-    // Everything the ministry anchored on Hedera
+    // PUBLIC: everything the ministry anchored on Hedera
     public function commitments()
     {
         return Commitment::orderBy('id')->get();
     }
 
-    // Info about one student (the demo uses S001)
-    public function student($code)
+    // The ministry and hacker buttons only exist for the demo
+    private function demoOnly(): void
     {
-        $s = Student::where('code', $code)->firstOrFail();
+        abort_unless(
+            filter_var(env('DEMO_MODE', false), FILTER_VALIDATE_BOOLEAN),
+            403,
+            'This action is only available in demo mode.'
+        );
+    }
+
+    // A student can only act on their own record
+    private function ownOnly(Request $r, string $code): void
+    {
+        abort_unless($r->user()->code === $code, 403, 'You can only access your own record.');
+    }
+
+    // Info about the logged-in student
+    public function student(Request $r, $code)
+    {
+        $this->ownOnly($r, $code);
+        $s = $r->user();
         return [
             'code' => $s->code,
             'score' => $s->score,
@@ -37,13 +54,14 @@ class InsafController extends Controller
     // The student submits ranked choices and receives a receipt anchored on Hedera
     public function apply(Request $r)
     {
+        set_time_limit(120);
+
         $d = $r->validate([
-            'code' => 'required|string',
             'choices' => 'required|array|min:3',
             'choices.*' => 'integer|exists:programs,id',
         ]);
 
-        $s = Student::where('code', $d['code'])->firstOrFail();
+        $s = $r->user(); // always the logged-in student, never a code sent by the browser
         $choices = array_map('intval', array_values(array_unique($d['choices'])));
         $salt = bin2hex(random_bytes(16));
         $hash = Insaf::commit($s->code, $choices, $salt);
@@ -67,9 +85,12 @@ class InsafController extends Controller
         ];
     }
 
-    // The ministry: commit rules, commit all inputs, run placement, commit results
+    // The ministry (demo only): commit rules, commit all inputs, run placement, commit results
     public function run()
     {
+        $this->demoOnly();
+        set_time_limit(180);
+
         $rules = json_encode([
             'formula' => 'score desc, tie by code asc, first choice with a free seat',
             'capacities' => Program::orderBy('id')->pluck('capacity', 'id'),
@@ -102,9 +123,12 @@ class InsafController extends Controller
         ]);
     }
 
-    // The "hacker": silently rewrites a student's record, like the Kef incident
-    public function tamper($code)
+    // The "hacker" (demo only): silently rewrites the student's own record, like the Kef incident
+    public function tamper(Request $r, $code)
     {
+        $this->demoOnly();
+        $this->ownOnly($r, $code);
+
         $a = Student::where('code', $code)->firstOrFail()->application()->firstOrFail();
         $orig = $a->choices;
         $rev = array_reverse($orig);
@@ -126,6 +150,7 @@ class InsafController extends Controller
             'salt' => 'required|string',
             'sequence' => 'required|integer',
         ]);
+        $this->ownOnly($r, $d['code']);
 
         $choices = array_map('intval', $d['choices']);
         $hash = Insaf::commit($d['code'], $choices, $d['salt']);

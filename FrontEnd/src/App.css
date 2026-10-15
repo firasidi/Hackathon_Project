@@ -305,3 +305,6 @@ body { margin: 0; }
   .ins-info-section { flex-direction: column; }
   .ins-info-col { width: 100%; }
 }
+
+/* The theme button hangs 25px inside the card: leave room under it so it hides no title */
+.ins-content-card > .ins-section:first-child { padding-top: 52px; }

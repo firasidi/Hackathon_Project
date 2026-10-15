@@ -1,0 +1,91 @@
+/* ==========================================================================
+   STUDENT BAR + PROFILE PAGE - navy / bronze / gold, day and night
+   ========================================================================== */
+
+/* ── Student bar (navy, like the old student box) ── */
+.ins-sbar {
+  display: flex; align-items: stretch; gap: 16px; flex-wrap: wrap;
+  background: linear-gradient(135deg, #0B1F3A 0%, #0f2847 60%, #0B1F3A 100%);
+  border: 1px solid #8C6D3F; border-radius: 8px; padding: 20px 24px; margin-bottom: 30px;
+  position: relative; overflow: hidden;
+  box-shadow: 0 6px 25px rgba(11, 31, 58, 0.3), inset 0 1px 0 rgba(212,175,55,0.15);
+}
+.ins-sbar::before {
+  content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+  background: linear-gradient(to right, #8C6D3F, #D4AF37, #8C6D3F);
+}
+
+/* Avatar: click to open the profile */
+.ins-avatar {
+  position: relative; flex: 0 0 auto; width: 92px; height: 92px; padding: 0; cursor: pointer;
+  border: 2px solid #8C6D3F; border-radius: 16px; overflow: hidden;
+  background: linear-gradient(160deg, #1a3a6b, #0B1F3A);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s, border-color 0.3s;
+}
+.ins-avatar svg { width: 62px; height: 62px; fill: #8C6D3F; transition: fill 0.3s; }
+.ins-avatar:hover { transform: translateY(-4px) scale(1.04); border-color: #D4AF37; box-shadow: 0 10px 24px rgba(212,175,55,0.3); }
+.ins-avatar:hover svg { fill: #D4AF37; }
+.ins-avatar:active { transform: scale(0.97); transition-duration: 0.1s; }
+.ins-avatar-hint {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 2px; text-align: center;
+  background: rgba(11,31,58,0.92); color: #D4AF37; font-size: 9.5px; font-weight: bold;
+  letter-spacing: 0.4px; text-transform: uppercase; transform: translateY(100%); transition: transform 0.25s ease;
+}
+.ins-avatar:hover .ins-avatar-hint, .ins-avatar:focus-visible .ins-avatar-hint { transform: translateY(0); }
+
+/* Name cards */
+.ins-scard {
+  flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(212,175,55,0.28); border-radius: 10px; padding: 12px 18px;
+}
+.ins-scard-label {
+  color: #D4AF37; font-family: "Georgia", serif; font-style: italic; font-weight: bold;
+  font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+}
+.ins-scard-name { color: #ffffff; font-size: 17px; font-weight: 700; }
+.ins-scard-line { color: rgba(255,255,255,0.82); font-size: 12.5px; word-break: break-word; }
+.ins-scard-score { color: #D4AF37; font-size: 12px; }
+.ins-scard-ar .ins-scard-label { font-style: normal; font-size: 13px; letter-spacing: 0; }
+.ins-scard-ar .ins-scard-name { font-size: 18px; }
+
+/* Logout inside the navy bar */
+.ins-btn.ins-logout { align-self: center; background: transparent; }
+.ins-btn.ins-logout:hover:not(:disabled) { background: #8C6D3F; }
+
+/* ── Profile page ── */
+.ins-content-card > .ins-card-head { padding-left: 88px; }
+
+.ins-ro-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.ins-ro {
+  position: relative; display: flex; flex-direction: column; gap: 4px;
+  background: var(--soft-bg); border: 1px solid var(--soft-border); border-radius: 4px; padding: 12px 40px 12px 14px;
+}
+.ins-ro[dir="rtl"] { padding: 12px 14px 12px 40px; }
+.ins-ro-label { font-size: 10.5px; font-weight: bold; color: #8C6D3F; text-transform: uppercase; letter-spacing: 0.9px; }
+.ins-ro[dir="rtl"] .ins-ro-label { letter-spacing: 0; font-size: 12px; }
+.ins-ro-value { font-size: 14px; color: var(--text); word-break: break-word; }
+.ins-ro-lock { position: absolute; top: 10px; right: 12px; font-size: 13px; opacity: 0.7; }
+.ins-ro[dir="rtl"] .ins-ro-lock { right: auto; left: 12px; }
+
+.ins-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.ins-field-hint { font-size: 11.5px; color: var(--muted); margin: 6px 0 0; }
+.ins-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+.ins-btn-ghost { background: transparent; color: #8C6D3F; }
+.ins-btn-ghost:hover:not(:disabled) { background: rgba(140,109,63,0.15); color: var(--text); }
+
+@media (max-width: 640px) {
+  .ins-sbar { padding: 16px; }
+  .ins-avatar { width: 76px; height: 76px; }
+  .ins-ro-grid, .ins-row2 { grid-template-columns: 1fr; }
+  .ins-content-card > .ins-card-head { padding-left: 80px; }
+}
+
+/* Back link on the profile page (same style as the Dashboard's back link) */
+.ins-back-link {
+  background: linear-gradient(to right, #8C6D3F, #D4AF37, #8C6D3F); -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; border: none; cursor: pointer; padding: 0;
+  font-family: "Georgia", serif; font-style: italic; font-weight: bold; font-size: 20px;
+  text-decoration: underline; text-decoration-color: #8C6D3F; transition: opacity 0.2s, letter-spacing 0.2s;
+}
+.ins-back-link:hover { opacity: 0.75; letter-spacing: 0.5px; }

@@ -10,8 +10,11 @@ return new class extends Migration
     {
         Schema::create('students', function (Blueprint $t) {
             $t->id();
-            $t->string('code')->unique();      // pseudonym like S001, no real names
-            $t->decimal('score', 5, 2);        // orientation score
+            $t->string('code')->unique();       // pseudonym like S001
+            $t->decimal('score', 5, 2);         // orientation score
+            $t->string('cin', 8)->nullable()->unique(); // username given by the ministry
+            $t->string('email')->nullable();    // where the reset code is sent
+            $t->string('password')->nullable(); // stored hashed, never in plain text
             $t->timestamps();
         });
     }
