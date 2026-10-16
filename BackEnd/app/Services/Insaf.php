@@ -34,25 +34,54 @@ class Insaf
 
     // Write a message on Hedera by running our small Node script
     public static function anchor(string $message): array
-{
-    $r = Process::path(base_path('hedera'))
-        ->timeout(60)
-        ->env([
-            'SystemRoot' => getenv('SystemRoot') ?: 'C:\\Windows',
-            'SYSTEMROOT' => getenv('SystemRoot') ?: 'C:\\Windows',
-            'windir'     => getenv('windir') ?: 'C:\\Windows',
-            'PATH'       => getenv('PATH') ?: getenv('Path'),
-            'TEMP'       => getenv('TEMP') ?: 'C:\\Windows\\Temp',
-            'TMP'        => getenv('TMP') ?: 'C:\\Windows\\Temp',
-        ])
-        ->run(['node', 'send.js', $message]);
+    {
+        $network = config('services.hedera.network');
+        $topicId = config('services.hedera.topic_id');
 
-    if ($r->failed() || !trim($r->output())) {
-        throw new \RuntimeException('send.js failed. exit=' . $r->exitCode() . ' err=' . $r->errorOutput() . ' out=' . $r->output());
+        if (!in_array($network, ['testnet', 'mainnet'], true) ||
+            !is_string($topicId) ||
+            !preg_match('/^\d+\.\d+\.\d+$/', $topicId)) {
+            throw new \RuntimeException('Hedera network and topic must be configured.');
+        }
+
+        $r = Process::path(base_path('hedera'))
+            ->timeout(60)
+            ->env([
+                'SystemRoot' => getenv('SystemRoot') ?: 'C:\\Windows',
+                'SYSTEMROOT' => getenv('SystemRoot') ?: 'C:\\Windows',
+                'windir'     => getenv('windir') ?: 'C:\\Windows',
+                'PATH'       => getenv('PATH') ?: getenv('Path'),
+                'TEMP'       => getenv('TEMP') ?: 'C:\\Windows\\Temp',
+                'TMP'        => getenv('TMP') ?: 'C:\\Windows\\Temp',
+                'HEDERA_NETWORK' => $network,
+                'TOPIC_ID' => $topicId,
+            ])
+            ->run(['node', 'send.js', $message]);
+
+        if ($r->failed() || !trim($r->output())) {
+            throw new \RuntimeException('Hedera anchoring process failed.');
+        }
+
+        $lines = array_filter(array_map('trim', explode("\n", $r->output())));
+        $result = json_decode((string) end($lines), true);
+        if (
+            !is_array($result) ||
+            !is_string($result['transactionId'] ?? null) ||
+            !is_numeric($result['sequence'] ?? null) ||
+            (int) $result['sequence'] < 1 ||
+            ($result['topicId'] ?? null) !== $topicId ||
+            ($result['network'] ?? null) !== $network
+        ) {
+            throw new \RuntimeException('Hedera anchoring returned an invalid receipt.');
+        }
+
+        return [
+            'transactionId' => $result['transactionId'],
+            'sequence' => (int) $result['sequence'],
+            'topicId' => $topicId,
+            'network' => $network,
+        ];
     }
-    $lines = array_filter(array_map('trim', explode("\n", $r->output())));
-    return json_decode(end($lines), true);
-}
 
     // Read a message back from Hedera's public Mirror Node
     public static function readAnchor(int $seq): ?string
@@ -60,18 +89,55 @@ class Insaf
         return self::readAnchorRecord($seq)['message'] ?? null;
     }
 
-    public static function readAnchorRecord(int $seq): ?array
+    public static function readAnchorRecord(int $seq, ?string $topicId = null): ?array
     {
-        $topic = env('HEDERA_TOPIC_ID');
-        for ($i = 0; $i < 4; $i++) {
-            $res = Http::get("https://testnet.mirrornode.hedera.com/api/v1/topics/{$topic}/messages/{$seq}");
-            if ($res->ok()) {
-                $record = $res->json();
-                $record['message'] = base64_decode($record['message'] ?? '', true) ?: '';
-                return $record;
-            }
-            sleep(2); // the Mirror Node can lag a few seconds
+        $topicId ??= config('services.hedera.topic_id');
+        $mirrorNodeUrl = rtrim((string) config('services.hedera.mirror_node_url'), '/');
+
+        if (
+            $seq < 1 ||
+            !is_string($topicId) ||
+            !preg_match('/^\d+\.\d+\.\d+$/', $topicId) ||
+            $mirrorNodeUrl === ''
+        ) {
+            throw new \RuntimeException('Hedera Mirror Node configuration is invalid.');
         }
+
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $response = Http::connectTimeout(3)
+                ->timeout(8)
+                ->acceptJson()
+                ->get("{$mirrorNodeUrl}/api/v1/topics/{$topicId}/messages/{$seq}");
+
+            if ($response->status() === 404) {
+                if ($attempt < 2) {
+                    usleep(500_000);
+                }
+                continue;
+            }
+
+            $response->throw();
+            $record = $response->json();
+            if (!is_array($record)) {
+                throw new \UnexpectedValueException('Mirror Node returned invalid JSON.');
+            }
+            if (
+                ($record['topic_id'] ?? null) !== $topicId ||
+                !is_numeric($record['sequence_number'] ?? null) ||
+                (int) $record['sequence_number'] !== $seq
+            ) {
+                throw new \UnexpectedValueException('Mirror Node returned a different topic message.');
+            }
+
+            $encodedMessage = $record['message'] ?? null;
+            if (!is_string($encodedMessage) || ($message = base64_decode($encodedMessage, true)) === false) {
+                throw new \UnexpectedValueException('Mirror Node returned an invalid message encoding.');
+            }
+
+            $record['message'] = $message;
+            return $record;
+        }
+
         return null;
     }
 

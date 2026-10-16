@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import api from "./api";
+import api from "./Api";
 import { LanguageToggle, Toggles } from "./Layout";
 import "./Login.css";
 import "./Profile.css";

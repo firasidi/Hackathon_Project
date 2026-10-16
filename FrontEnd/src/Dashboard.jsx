@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import api from "./api";
+import api from "./Api";
 import Layout, { Toggles } from "./Layout";
-import StudentBar from "./StudentBar";
-import ProfilePage from "./ProfilePage";
+import StudentBar from "./Studentbar";
+import ProfilePage from "./Profilepage";
 import insatPhoto from "./assets/INSAT.jpg";
 import isimsPhoto from "./assets/ISIMS-cover.webp";
 import issatSoussePhoto from "./assets/issat sousse.jpg";
@@ -212,7 +212,10 @@ const downloadReceiptPdf = async (receipt, profile, universities, lang, labels) 
   y += 3;
   addField(labels.hash, receipt.hash);
   addField(labels.tx, receipt.tx);
+  addField(labels.network, receipt.network);
+  addField(labels.topicId, receipt.topicId);
   addField(labels.seq, receipt.sequence);
+  addField(labels.consensusTimestamp, receipt.consensusTimestamp);
   document.save(`receipt-${receipt.code}-${receipt.sequence}.pdf`);
 };
 
@@ -341,6 +344,9 @@ const translations = {
     receiptScore: "Score d'orientation",
     receiptDate: "Date de soumission",
     receiptChoices: "Vos vœux classés",
+    network: "Réseau Hedera",
+    topicId: "Topic ID",
+    consensusTimestamp: "Horodatage de consensus",
     printReceipt: "Imprimer le reçu",
     savedReceipt: "Votre reçu est enregistré. Vous pouvez le rouvrir ou télécharger le PDF.",
     viewReceipt: "Consulter le reçu",
@@ -368,6 +374,7 @@ const translations = {
 
     s4Text: "Le téléphone de l'étudiant compare son reçu à ce que Hedera a enregistré.",
     verify: "Vérifier mes vœux",
+    verifyPending: "Vérification en attente de la confirmation du Mirror Node.",
     integrityMismatch: "Integrity check failed. Your current preferences do not match the original submission recorded on Hedera.",
     generateIncidentPdf: "Generate Incident Report PDF",
     submitIncidentReport: "Submit Report to Administrator",
@@ -431,6 +438,9 @@ const translations = {
     receiptScore: "Orientation score",
     receiptDate: "Submission date",
     receiptChoices: "Your ranked preferences",
+    network: "Hedera network",
+    topicId: "Topic ID",
+    consensusTimestamp: "Consensus timestamp",
     printReceipt: "Print receipt",
     savedReceipt: "Your receipt is saved. Reopen it or download the PDF.",
     viewReceipt: "View saved receipt",
@@ -458,6 +468,7 @@ const translations = {
 
     s4Text: "The student's phone compares their receipt with what Hedera recorded.",
     verify: "Verify my preferences",
+    verifyPending: "Verification is waiting for the Mirror Node to confirm the record.",
     integrityMismatch: "Integrity check failed. Your current preferences do not match the original submission recorded on Hedera.",
     generateIncidentPdf: "Generate Incident Report PDF",
     submitIncidentReport: "Submit Report to Administrator",
@@ -836,7 +847,10 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                   <dl className="ins-receipt-proof">
                     <div><dt>{t.hash}</dt><dd>{receipt.hash}</dd></div>
                     <div><dt>{t.tx}</dt><dd>{receipt.tx}</dd></div>
+                    <div><dt>{t.network}</dt><dd>{receipt.network ?? "-"}</dd></div>
+                    <div><dt>{t.topicId}</dt><dd>{receipt.topicId ?? "-"}</dd></div>
                     <div><dt>{t.seq}</dt><dd>{receipt.sequence}</dd></div>
+                    <div><dt>{t.consensusTimestamp}</dt><dd>{receipt.consensusTimestamp ?? "-"}</dd></div>
                   </dl>
                   <div className="ins-print-actions">
                     <button
@@ -1096,12 +1110,15 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
             <p className="ins-text">{t.s4Text}</p>
             <button className="ins-btn" disabled={!receipt || !!busy} onClick={verify}>{t.verify}</button>
             {result && (
-              <div className={"ins-result " + (result.valid ? "ok" : "ko")}>
-                <h2>{result.incident
-                  ? `⚠️ ${t.integrityMismatch}`
-                  : result.valid
-                    ? `✅ ${t.valid}`
-                    : `🚨 ${t.invalid}`}</h2>
+              <div className={"ins-result " + (result.pending ? "pending" : result.valid ? "ok" : "ko")}>
+                <h2>{result.pending
+                  ? t.verifyPending
+                  : result.incident
+                    ? `⚠️ ${t.integrityMismatch}`
+                    : result.valid
+                      ? `✅ ${t.valid}`
+                      : `🚨 ${t.invalid}`}</h2>
+                {result.pending && <p role="status">{result.message}</p>}
                 {result.incident && (
                   <>
                     <button className="ins-btn" type="button" onClick={generateIncidentPdf}>
@@ -1124,7 +1141,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                     )}
                   </>
                 )}
-                {result.checks.map((c, i) => (
+                {(result.checks ?? []).map((c, i) => (
                   <div key={i} className="ins-check">{c.ok ? "✅" : "❌"} {t.checks[i] ?? c.name}</div>
                 ))}
               </div>

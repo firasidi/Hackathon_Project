@@ -750,6 +750,7 @@ body { margin: 0; }
 .ins-result { margin-top: 18px; padding: 16px; border-radius: 4px; }
 .ins-result.ok { background: rgba(40,140,70,0.10); border: 1px solid rgba(40,140,70,0.35); border-left: 3px solid #288c46; }
 .ins-result.ko { background: rgba(220,50,50,0.09); border: 1px solid rgba(220,50,50,0.3); border-left: 3px solid #dc3232; }
+.ins-result.pending { background: rgba(140,109,63,0.10); border: 1px solid rgba(140,109,63,0.35); border-left: 3px solid #8c6d3f; }
 .ins-result h2 { font-family: "Georgia", serif; font-size: 22px; margin: 0 0 12px; }
 .ins-result.ok h2 { color: var(--ok-text); }
 .ins-result.ko h2 { color: var(--ko-text); }

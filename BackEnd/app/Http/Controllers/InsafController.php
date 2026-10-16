@@ -8,6 +8,8 @@ use App\Models\Program;
 use App\Models\Student;
 use App\Models\University;
 use App\Services\Insaf;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
@@ -125,7 +127,10 @@ class InsafController extends Controller
                 'salt' => $application->receipt_salt,
                 'hash' => $application->receipt_hash,
                 'tx' => $application->receipt_transaction_id,
+                'network' => $application->receipt_network ?? config('services.hedera.network'),
+                'topicId' => $application->receipt_topic_id ?? config('services.hedera.topic_id'),
                 'sequence' => (int) $application->receipt_sequence,
+                'consensusTimestamp' => $application->receipt_consensus_timestamp,
                 'submittedAt' => $application->receipt_submitted_at->toISOString(),
             ],
         ];
@@ -168,6 +173,9 @@ class InsafController extends Controller
             'receipt_salt' => $salt,
             'receipt_hash' => $hash,
             'receipt_transaction_id' => $a['transactionId'],
+            'receipt_network' => $a['network'],
+            'receipt_topic_id' => $a['topicId'],
+            'receipt_consensus_timestamp' => null,
             'receipt_sequence' => (int) $a['sequence'],
             'receipt_submitted_at' => $submittedAt,
             'placed_program_id' => null,
@@ -181,7 +189,10 @@ class InsafController extends Controller
             'salt' => $salt,
             'hash' => $hash,
             'tx' => $a['transactionId'],
+            'network' => $a['network'],
+            'topicId' => $a['topicId'],
             'sequence' => (int) $a['sequence'],
+            'consensusTimestamp' => null,
             'submittedAt' => $submittedAt->toISOString(),
         ];
     }
@@ -251,25 +262,97 @@ class InsafController extends Controller
             'choices' => 'required|array|min:3',
             'choices.*' => 'integer|distinct|exists:universities,id',
             'salt' => 'required|string',
-            'sequence' => 'required|integer',
-            'tx' => 'nullable|string',
+            'sequence' => 'required|integer|min:1',
+            'tx' => 'nullable|string|max:100',
         ]);
         $this->ownOnly($r, $d['code']);
 
+        $student = $r->user();
+        $app = $student->application;
+        if (
+            !$app ||
+            $app->receipt_sequence === null ||
+            $app->receipt_choices === null ||
+            !$app->receipt_salt
+        ) {
+            return response()->json([
+                'error' => 'receipt_not_found',
+                'message' => 'No saved receipt is available to verify.',
+            ], 409);
+        }
+
         $choices = array_map('intval', $d['choices']);
-        $app = Student::where('code', $d['code'])->first()?->application;
+        if (
+            (int) $d['sequence'] !== (int) $app->receipt_sequence ||
+            $choices !== array_map('intval', $app->receipt_choices) ||
+            !hash_equals((string) $app->receipt_salt, $d['salt']) ||
+            (($d['tx'] ?? null) !== null &&
+                $app->receipt_transaction_id !== null &&
+                $d['tx'] !== $app->receipt_transaction_id)
+        ) {
+            return response()->json([
+                'error' => 'receipt_mismatch',
+                'message' => 'The supplied receipt does not match the saved submission.',
+            ], 422);
+        }
+
+        $topicId = $app->receipt_topic_id ?? config('services.hedera.topic_id');
+        $configuredNetwork = config('services.hedera.network');
+        if (
+            $app->receipt_network !== null &&
+            $app->receipt_network !== $configuredNetwork
+        ) {
+            return response()->json([
+                'error' => 'receipt_network_mismatch',
+                'message' => 'The receipt belongs to a different Hedera network.',
+            ], 409);
+        }
+
         $hash = Insaf::commit($d['code'], $choices, $d['salt']);
-        $anchorRecord = Insaf::readAnchorRecord($d['sequence']);
+        try {
+            $anchorRecord = Insaf::readAnchorRecord($d['sequence'], $topicId);
+        } catch (ConnectionException|RequestException $e) {
+            report($e);
+            return response()->json([
+                'error' => 'mirror_node_unavailable',
+                'message' => 'The Hedera Mirror Node is temporarily unavailable. Please retry verification.',
+            ], 503);
+        } catch (\UnexpectedValueException $e) {
+            report($e);
+            return response()->json([
+                'error' => 'invalid_mirror_node_record',
+                'message' => 'The Mirror Node returned an invalid record. Verification was not completed.',
+            ], 502);
+        }
+
+        if ($anchorRecord === null) {
+            return response()->json([
+                'error' => 'verification_pending',
+                'pending' => true,
+                'message' => 'The Hedera record is not available yet. Please retry verification shortly.',
+            ], 202);
+        }
+
         $anchorMessage = $anchorRecord['message'] ?? null;
-        $anchoredHash = is_string($anchorMessage) && str_starts_with($anchorMessage, 'c:')
-            ? substr($anchorMessage, 2)
-            : null;
+        if (!is_string($anchorMessage) || !preg_match('/^c:([a-f0-9]{64})$/i', $anchorMessage, $matches)) {
+            return response()->json([
+                'error' => 'invalid_receipt_record',
+                'message' => 'The Hedera record does not contain a valid submission fingerprint.',
+            ], 422);
+        }
+        $anchoredHash = $matches[1];
+        if (!empty($anchorRecord['consensus_timestamp'])) {
+            $app->update([
+                'receipt_consensus_timestamp' => $anchorRecord['consensus_timestamp'],
+            ]);
+        }
+
         $checks = [];
 
         // 1. Is my receipt really on Hedera?
         $checks[] = [
             'name' => 'My receipt matches the hash anchored on Hedera',
-            'ok' => $anchorMessage === 'c:' . $hash,
+            'ok' => hash_equals('c:' . $hash, $anchorMessage),
         ];
 
         // 2. Does the platform still hold what I submitted?
@@ -323,7 +406,8 @@ class InsafController extends Controller
                     'added' => array_values(array_diff($currentChoices, $originalChoices)),
                 ],
                 'hedera' => [
-                    'topicId' => $anchorRecord['topic_id'] ?? env('HEDERA_TOPIC_ID'),
+                    'network' => $app->receipt_network ?? $configuredNetwork,
+                    'topicId' => $anchorRecord['topic_id'],
                     'sequence' => $anchorRecord['sequence_number'] ?? $d['sequence'],
                     'consensusTimestamp' => $anchorRecord['consensus_timestamp'] ?? null,
                     'recordReference' => $anchorRecord['transaction_id']

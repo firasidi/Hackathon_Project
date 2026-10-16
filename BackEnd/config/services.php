@@ -22,6 +22,15 @@ return [
         'key' => env('RESEND_API_KEY'),
     ],
 
+    'hedera' => [
+        'network' => env('HEDERA_NETWORK', 'testnet'),
+        'topic_id' => env('HEDERA_TOPIC_ID'),
+        'mirror_node_url' => env(
+            'HEDERA_MIRROR_NODE_URL',
+            'https://testnet.mirrornode.hedera.com'
+        ),
+    ],
+
     'ses' => [
         'key' => env('AWS_ACCESS_KEY_ID'),
         'secret' => env('AWS_SECRET_ACCESS_KEY'),

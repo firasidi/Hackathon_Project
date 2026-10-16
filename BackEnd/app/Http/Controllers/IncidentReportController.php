@@ -106,7 +106,10 @@ class IncidentReportController extends Controller
             'The report fingerprints do not match the saved receipt and current application.'
         );
 
-        $anchorRecord = Insaf::readAnchorRecord((int) $application->receipt_sequence);
+        $anchorRecord = Insaf::readAnchorRecord(
+            (int) $application->receipt_sequence,
+            $application->receipt_topic_id ?? config('services.hedera.topic_id')
+        );
         abort_unless(
             $anchorRecord &&
             ($anchorRecord['message'] ?? null) === 'c:' . $originalHash,

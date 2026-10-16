@@ -6,8 +6,10 @@ use App\Models\Application;
 use App\Models\University;
 use App\Services\Insaf;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
 use Laravel\Sanctum\Sanctum;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
 use Tests\TestCase;
@@ -15,6 +17,17 @@ use Tests\TestCase;
 class UniversitySelectionTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config([
+            'services.hedera.network' => 'testnet',
+            'services.hedera.topic_id' => '0.0.123',
+            'services.hedera.mirror_node_url' => 'https://testnet.mirrornode.hedera.com',
+        ]);
+    }
 
     public function test_each_specialty_lists_five_universities_and_placement_uses_selected_universities(): void
     {
@@ -133,6 +146,9 @@ class UniversitySelectionTest extends TestCase
         $application = Application::with('student')->firstOrFail();
         $application->update([
             'receipt_transaction_id' => '0.0.123@1700000000.000000001',
+            'receipt_network' => 'testnet',
+            'receipt_topic_id' => '0.0.123',
+            'receipt_consensus_timestamp' => '1700000000.000000001',
             'receipt_sequence' => 42,
             'receipt_submitted_at' => now(),
             'receipt_choices' => $application->choices,
@@ -153,7 +169,10 @@ class UniversitySelectionTest extends TestCase
             ->assertJsonPath('receipt.salt', $application->salt)
             ->assertJsonPath('receipt.hash', $application->getOriginal('receipt_hash'))
             ->assertJsonPath('receipt.tx', '0.0.123@1700000000.000000001')
+            ->assertJsonPath('receipt.network', 'testnet')
+            ->assertJsonPath('receipt.topicId', '0.0.123')
             ->assertJsonPath('receipt.sequence', 42)
+            ->assertJsonPath('receipt.consensusTimestamp', '1700000000.000000001')
             ->assertJsonStructure(['receipt' => ['submittedAt']]);
     }
 
@@ -188,11 +207,52 @@ class UniversitySelectionTest extends TestCase
             ->assertJsonValidationErrors('choices');
     }
 
+    public function test_student_submission_stores_the_hedera_receipt_metadata(): void
+    {
+        $this->seed();
+        $student = \App\Models\Student::where('code', 'S001')->firstOrFail();
+        $choices = University::query()
+            ->orderBy('id')
+            ->limit(3)
+            ->pluck('id')
+            ->map(fn($id) => (int) $id)
+            ->all();
+        Sanctum::actingAs($student);
+        Process::fake([
+            '*' => Process::result(json_encode([
+                'transactionId' => '0.0.123@1700000000.000000001',
+                'sequence' => '42',
+                'topicId' => '0.0.123',
+                'network' => 'testnet',
+            ], JSON_THROW_ON_ERROR)),
+        ]);
+
+        $response = $this->postJson('/api/apply', ['choices' => $choices])
+            ->assertOk()
+            ->assertJsonPath('network', 'testnet')
+            ->assertJsonPath('topicId', '0.0.123')
+            ->assertJsonPath('sequence', 42)
+            ->assertJsonPath('consensusTimestamp', null);
+
+        $application = Application::where('student_id', $student->id)->firstOrFail();
+        $this->assertSame($choices, array_map('intval', $application->receipt_choices));
+        $this->assertSame($response->json('hash'), $application->receipt_hash);
+        $this->assertSame('testnet', $application->receipt_network);
+        $this->assertSame('0.0.123', $application->receipt_topic_id);
+        $this->assertSame(42, (int) $application->receipt_sequence);
+        $this->assertNull($application->receipt_consensus_timestamp);
+        Process::assertRan(fn($process) =>
+            in_array('send.js', (array) $process->command, true) &&
+            ($process->environment['TOPIC_ID'] ?? null) === '0.0.123'
+        );
+    }
+
     public function test_verification_does_not_require_a_published_merkle_root(): void
     {
         $this->seed();
         $application = Application::with('student')->firstOrFail();
         $choices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $choices);
         $hash = Insaf::commit($application->student->code, $choices, $application->salt);
         Http::fake([
             '*' => Http::response([
@@ -205,17 +265,136 @@ class UniversitySelectionTest extends TestCase
         ]);
         Sanctum::actingAs($application->student);
 
-        $this->postJson('/api/verify', [
-            'code' => $application->student->code,
-            'score' => $application->student->score,
-            'choices' => $choices,
-            'salt' => $application->salt,
-            'sequence' => 42,
-            'tx' => '0.0.123@1700000000.000000001',
-        ])
+        $this->postJson('/api/verify', $this->verificationPayload($application, $choices))
             ->assertOk()
             ->assertJsonPath('valid', true)
             ->assertJsonCount(2, 'checks');
+
+        $this->assertDatabaseHas('applications', [
+            'id' => $application->id,
+            'receipt_consensus_timestamp' => '1700000000.000000001',
+        ]);
+    }
+
+    public function test_verification_reports_a_pending_mirror_node_record_without_marking_it_invalid(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $choices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $choices);
+        Sanctum::actingAs($application->student);
+        Http::fake(['*' => Http::response([], 404)]);
+
+        $this->postJson('/api/verify', $this->verificationPayload($application, $choices))
+            ->assertStatus(202)
+            ->assertJsonPath('error', 'verification_pending');
+    }
+
+    public function test_verification_rejects_a_receipt_sequence_that_does_not_match_the_saved_submission(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $choices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $choices);
+        Sanctum::actingAs($application->student);
+
+        $payload = $this->verificationPayload($application, $choices);
+        $payload['sequence'] = 43;
+
+        $this->postJson('/api/verify', $payload)
+            ->assertUnprocessable()
+            ->assertJsonPath('error', 'receipt_mismatch');
+        Http::assertNothingSent();
+    }
+
+    public function test_verification_reports_mirror_node_service_errors_explicitly(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $choices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $choices);
+        Sanctum::actingAs($application->student);
+        Http::fake(['*' => Http::response([], 503)]);
+
+        $this->postJson('/api/verify', $this->verificationPayload($application, $choices))
+            ->assertStatus(503)
+            ->assertJsonPath('error', 'mirror_node_unavailable');
+    }
+
+    public function test_verification_rejects_a_mirror_node_record_from_a_different_topic(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $choices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $choices);
+        Sanctum::actingAs($application->student);
+        Http::fake(['*' => Http::response([
+            'message' => base64_encode('c:' . Insaf::commit(
+                $application->student->code,
+                $choices,
+                $application->salt
+            )),
+            'topic_id' => '0.0.999',
+            'sequence_number' => 42,
+        ])]);
+
+        $this->postJson('/api/verify', $this->verificationPayload($application, $choices))
+            ->assertStatus(502)
+            ->assertJsonPath('error', 'invalid_mirror_node_record');
+    }
+
+    public function test_verification_rejects_a_mirror_node_record_with_a_different_sequence(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $choices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $choices);
+        Sanctum::actingAs($application->student);
+        Http::fake(['*' => Http::response([
+            'message' => base64_encode('c:' . Insaf::commit(
+                $application->student->code,
+                $choices,
+                $application->salt
+            )),
+            'topic_id' => '0.0.123',
+            'sequence_number' => 43,
+        ])]);
+
+        $this->postJson('/api/verify', $this->verificationPayload($application, $choices))
+            ->assertStatus(502)
+            ->assertJsonPath('error', 'invalid_mirror_node_record');
+    }
+
+    public function test_verification_rejects_malformed_mirror_node_message_encoding(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $choices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $choices);
+        Sanctum::actingAs($application->student);
+        Http::fake(['*' => Http::response([
+            'message' => 'not base64!',
+            'topic_id' => '0.0.123',
+            'sequence_number' => 42,
+        ])]);
+
+        $this->postJson('/api/verify', $this->verificationPayload($application, $choices))
+            ->assertStatus(502)
+            ->assertJsonPath('error', 'invalid_mirror_node_record');
+    }
+
+    public function test_verification_handles_mirror_node_connection_failures_explicitly(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $choices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $choices);
+        Sanctum::actingAs($application->student);
+        Http::fake(fn () => throw new ConnectionException('Mirror Node connection failed'));
+
+        $this->postJson('/api/verify', $this->verificationPayload($application, $choices))
+            ->assertStatus(503)
+            ->assertJsonPath('error', 'mirror_node_unavailable');
     }
 
     public function test_verification_returns_incident_details_when_saved_preferences_differ_from_hedera(): void
@@ -234,6 +413,8 @@ class UniversitySelectionTest extends TestCase
             'receipt_hash' => $originalHash,
             'receipt_sequence' => 42,
             'receipt_transaction_id' => '0.0.123@1700000000.000000001',
+            'receipt_network' => 'testnet',
+            'receipt_topic_id' => '0.0.123',
             'choices' => array_reverse($originalChoices),
             'commitment' => Insaf::commit(
                 $application->student->code,
@@ -392,6 +573,8 @@ class UniversitySelectionTest extends TestCase
             'receipt_hash' => $originalHash,
             'receipt_sequence' => 42,
             'receipt_transaction_id' => $transactionId,
+            'receipt_network' => 'testnet',
+            'receipt_topic_id' => '0.0.123',
             'choices' => $currentChoices,
             'commitment' => $currentHash,
         ]);
@@ -437,6 +620,37 @@ class UniversitySelectionTest extends TestCase
                 ],
             ],
             $originalHash,
+        ];
+    }
+
+    private function prepareReceipt(Application $application, array $choices): void
+    {
+        $application->update([
+            'receipt_choices' => $choices,
+            'receipt_salt' => $application->salt,
+            'receipt_hash' => Insaf::commit(
+                $application->student->code,
+                $choices,
+                $application->salt
+            ),
+            'receipt_transaction_id' => '0.0.123@1700000000.000000001',
+            'receipt_network' => 'testnet',
+            'receipt_topic_id' => '0.0.123',
+            'receipt_consensus_timestamp' => null,
+            'receipt_sequence' => 42,
+            'receipt_submitted_at' => now(),
+        ]);
+    }
+
+    private function verificationPayload(Application $application, array $choices): array
+    {
+        return [
+            'code' => $application->student->code,
+            'score' => $application->student->score,
+            'choices' => $choices,
+            'salt' => $application->salt,
+            'sequence' => 42,
+            'tx' => '0.0.123@1700000000.000000001',
         ];
     }
 }

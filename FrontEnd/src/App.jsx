@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
-import api from "./api";
-import LoginPage from "./LoginPage";
+import api from "./Api";
+import LoginPage from "./Loginpage";
 import "./App.css";
 
 const Dashboard = lazy(() => import("./Dashboard"));
