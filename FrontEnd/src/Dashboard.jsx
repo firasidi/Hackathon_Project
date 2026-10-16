@@ -372,10 +372,20 @@ const translations = {
 
     s3Text: "Quelqu'un modifie discrètement le dossier de l'étudiant dans la base, comme dans l'affaire du Kef en août 2025.",
     tamper: "Modifier mon dossier",
+    demoTamperTitle: "Démonstration contrôlée — étudiant S001",
+    demoTamperReceiptRequired: "L’étudiant S001 doit d’abord soumettre ses vœux et obtenir un reçu Hedera.",
+    demoTamperBefore: "Préférences avant la modification",
+    demoTamperAfter: "Préférences modifiées en base",
+    demoTamperReceipt: "Reçu Hedera original conservé",
+    demoTamperExplanation: "Seules les préférences actuelles de la base ont changé. Le reçu et son enregistrement Hedera restent inchangés.",
+    demoTamperDetected: "La vérification a retrouvé l’empreinte originale sur Hedera et détecté la différence avec les préférences actuelles.",
+    originalHashLabel: "Empreinte originale ancrée",
+    currentHashLabel: "Empreinte recalculée depuis la base",
 
     s4Text: "Le téléphone de l'étudiant compare son reçu à ce que Hedera a enregistré.",
     verify: "Vérifier mes vœux",
     verifyPending: "Vérification en attente de la confirmation du Mirror Node.",
+    verifyError: "La vérification n’a pas pu être terminée. Aucun résultat positif n’est confirmé.",
     integrityMismatch: "Integrity check failed. Your current preferences do not match the original submission recorded on Hedera.",
     generateIncidentPdf: "Generate Incident Report PDF",
     submitIncidentReport: "Submit Report to Administrator",
@@ -468,10 +478,20 @@ const translations = {
 
     s3Text: "Someone silently rewrites the student's record in the database, as in the Kef case of August 2025.",
     tamper: "Change my record",
+    demoTamperTitle: "Controlled demonstration — student S001",
+    demoTamperReceiptRequired: "Student S001 must submit preferences and obtain a Hedera receipt first.",
+    demoTamperBefore: "Preferences before modification",
+    demoTamperAfter: "Preferences modified in the database",
+    demoTamperReceipt: "Original Hedera receipt preserved",
+    demoTamperExplanation: "Only the current database preferences changed. The receipt and its Hedera record remain unchanged.",
+    demoTamperDetected: "Verification retrieved the original fingerprint from Hedera and detected that the current preferences differ.",
+    originalHashLabel: "Original fingerprint anchored on Hedera",
+    currentHashLabel: "Fingerprint recalculated from the database",
 
     s4Text: "The student's phone compares their receipt with what Hedera recorded.",
     verify: "Verify my preferences",
     verifyPending: "Verification is waiting for the Mirror Node to confirm the record.",
+    verifyError: "Verification could not be completed. No positive result is confirmed.",
     integrityMismatch: "Integrity check failed. Your current preferences do not match the original submission recorded on Hedera.",
     generateIncidentPdf: "Generate Incident Report PDF",
     submitIncidentReport: "Submit Report to Administrator",
@@ -505,6 +525,9 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
   const [student, setStudent] = useState(null);
   const [choices, setChoices] = useState([]);
   const [receipt, setReceipt] = useState(null);
+  const [demoModeEnabled, setDemoModeEnabled] = useState(false);
+  const [demoTamperAvailable, setDemoTamperAvailable] = useState(false);
+  const [demoTamperState, setDemoTamperState] = useState(null);
   const [incidentPdf, setIncidentPdf] = useState(null);
   const [incidentSubmission, setIncidentSubmission] = useState(null);
   const [incidentSubmissionBusy, setIncidentSubmissionBusy] = useState(false);
@@ -538,6 +561,13 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
       specialtyName: getSpecialtyName(specialty.name, lang),
     }))
   );
+  const describeDemoChoices = (choiceIds) => choiceIds.map((id, index) => {
+    const university = allUniversities.find((item) => Number(item.id) === Number(id));
+    const name = university
+      ? (lang === "en" ? university.name_en : university.name_fr)
+      : `#${id}`;
+    return `${index + 1}. ${name}`;
+  }).join(" · ");
 
   const navigatePage = (nextPage, specialtyId = null) => {
     window.history.pushState({
@@ -585,6 +615,8 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
       setProfile(data.profile);
       setChoices(data.choices.filter((id) => !retiredIds.has(id)));
       setReceipt(data.receipt);
+      setDemoModeEnabled(data.demoModeEnabled === true);
+      setDemoTamperAvailable(data.demoTamperAvailable === true);
     }).catch((error) => {
       if (error.response?.status === 401) {
         onSessionExpired();
@@ -629,13 +661,33 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
   });
   const tamper = () => act("tamper", async () => {
     setResult(null);
-    await api.post(`/admin/tamper/${code}`);
+    setDemoTamperState(null);
+    setIncidentPdf(null);
+    setIncidentSubmission(null);
+    try {
+      const { data } = await api.post("/admin/tamper/S001");
+      setDemoTamperState(data);
+      const verification = await api.post("/verify", data.receipt);
+      setResult(verification.data);
+    } catch (error) {
+      setResult({
+        verificationError: error.response?.data?.message || error.message,
+      });
+      throw error;
+    }
   });
   const verify = () => act("verify", async () => {
     setResult(null);
     setIncidentPdf(null);
     setIncidentSubmission(null);
-    setResult((await api.post("/verify", receipt)).data);
+    try {
+      setResult((await api.post("/verify", receipt)).data);
+    } catch (error) {
+      setResult({
+        verificationError: error.response?.data?.message || error.message,
+      });
+      throw error;
+    }
   });
   const generateIncidentPdf = async () => {
     if (!result?.incident) return;
@@ -1128,11 +1180,14 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
             </div>
           </section>
 
-          {profile?.is_admin && (
+          {profile?.is_admin && demoModeEnabled && (
             <section className="ins-section">
               <h2 className="ins-section-title">{t.s3}</h2>
               <p className="ins-text">{t.s3Text}</p>
-              <button className="ins-btn danger" disabled={!!busy} onClick={tamper}>{t.tamper}</button>
+              {!demoTamperAvailable && <p className="ins-text">{t.demoTamperReceiptRequired}</p>}
+              <button className="ins-btn danger" disabled={!!busy || !demoTamperAvailable} onClick={tamper}>
+                {lang === "en" ? "Hack / Simulate Tampering" : "Piratage / Simuler une altération"}
+              </button>
             </section>
           )}
 
@@ -1141,16 +1196,44 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
             <h2 className="ins-section-title">{t.s4}</h2>
             <p className="ins-text">{t.s4Text}</p>
             <button className="ins-btn" disabled={!receipt || !!busy} onClick={verify}>{t.verify}</button>
+            {demoTamperState && (
+              <div className="ins-result pending" role="status">
+                <h3>{t.demoTamperTitle}</h3>
+                <p><b>{t.demoTamperBefore}:</b> {describeDemoChoices(demoTamperState.beforeChoices)}</p>
+                <p><b>{t.demoTamperAfter}:</b> {describeDemoChoices(demoTamperState.afterChoices)}</p>
+                <p>
+                  <b>{t.demoTamperReceipt}:</b>{" "}
+                  {demoTamperState.receipt.network} · {demoTamperState.receipt.topicId} ·{" "}
+                  {lang === "en" ? "sequence" : "séquence"} {demoTamperState.receipt.sequence}
+                </p>
+                <p>{t.demoTamperExplanation}</p>
+              </div>
+            )}
             {result && (
               <div className={"ins-result " + (result.pending ? "pending" : result.valid ? "ok" : "ko")}>
-                <h2>{result.pending
+                <h2>{result.verificationError
+                  ? t.verifyError
+                  : result.pending
                   ? t.verifyPending
                   : result.incident
                     ? `⚠️ ${t.integrityMismatch}`
                     : result.valid
                       ? `✅ ${t.valid}`
                       : `🚨 ${t.invalid}`}</h2>
+                {result.verificationError && <p role="alert">{result.verificationError}</p>}
                 {result.pending && <p role="status">{result.message}</p>}
+                {demoTamperState && result.incident && (
+                  <>
+                    <p role="status">{t.demoTamperDetected}</p>
+                    <p><b>{t.originalHashLabel}:</b> {result.incident.originalHash}</p>
+                    <p><b>{t.currentHashLabel}:</b> {result.incident.currentHash}</p>
+                    <p>
+                      <b>{t.demoTamperReceipt}:</b>{" "}
+                      {result.incident.hedera.network} · {result.incident.hedera.topicId} ·{" "}
+                      {lang === "en" ? "sequence" : "séquence"} {result.incident.hedera.sequence}
+                    </p>
+                  </>
+                )}
                 {result.incident && (
                   <>
                     <button className="ins-btn" type="button" onClick={generateIncidentPdf}>

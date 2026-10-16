@@ -109,8 +109,9 @@ npm run lint
 2. Configure Hedera testnet, an existing topic, and the sender credentials above. A live submission sends an HCS message and may incur network fees.
 3. Submit preferences once and retain the returned receipt. A second submission is rejected after a receipt is saved; this preserves the original receipt. There is no receipt-version history or resubmission workflow.
 4. Verify the receipt. The application reads the specific topic/sequence from the Mirror Node; allow time for indexing if it returns a pending response.
-5. To demonstrate controlled tampering, set `APP_ENV=local` (or `testing`) and `DEMO_MODE=true` in the backend only, then sign in as an administrator and use the demo tamper action on that administrator's own record. The API enforces both administrator authorization and the environment/demo-mode restriction. Do not enable demo mode in production.
-6. Verify again. If the current record differs from the anchored preferences, generate the incident PDF and submit the report. The backend checks the report against the saved receipt, current application, and actual HCS record before storage. An administrator can inspect the report, download its PDF, add review notes, and change its review status.
+5. The seeded synthetic student `S001` has no application by default. Sign in as `S001`, submit preferences once, and wait for a real testnet receipt. Then set `APP_ENV=local` (or `testing`) and `DEMO_MODE=true` in the backend only, and sign in as an administrator.
+6. On the administrator dashboard, choose **Hack / Simulate Tampering**. The server changes only S001's current saved preference order; it does not change or create a Hedera receipt. The UI immediately checks the original receipt against the Mirror Node and shows the before/after preferences, preserved topic/sequence, and the integrity mismatch. The API enforces administrator authorization and the environment/demo-mode restriction. Do not enable demo mode in production.
+7. If the current record differs from the anchored preferences, generate the incident PDF and submit the report. The backend checks the report against the saved receipt, current application, and actual HCS record before storage. An administrator can inspect the report, download its PDF, add review notes, and change its review status.
 
 ## Inspecting Hedera records
 

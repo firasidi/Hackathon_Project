@@ -25,6 +25,7 @@ return [
     'hedera' => [
         'network' => env('HEDERA_NETWORK', 'testnet'),
         'topic_id' => env('HEDERA_TOPIC_ID'),
+        'demo_mode' => env('DEMO_MODE', false),
         'mirror_node_url' => env(
             'HEDERA_MIRROR_NODE_URL',
             'https://testnet.mirrornode.hedera.com'

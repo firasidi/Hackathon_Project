@@ -16,6 +16,8 @@ use Illuminate\Support\Str;
 
 class InsafController extends Controller
 {
+    private const DEMO_STUDENT_CODE = 'S001';
+
     // PUBLIC: list of programs with seats and published cut-offs
     public function programs()
     {
@@ -33,6 +35,14 @@ class InsafController extends Controller
         $student = $r->user()->loadMissing('application.university.specialty');
         $application = $student->application;
         $university = $application?->university;
+        $demoApplication = $student->is_admin && $this->demoModeEnabled()
+            ? Student::where('code', self::DEMO_STUDENT_CODE)
+                ->whereHas('application', fn($query) => $query
+                    ->whereNotNull('receipt_sequence')
+                    ->whereNotNull('receipt_choices')
+                    ->whereNotNull('receipt_salt'))
+                ->exists()
+            : false;
 
         return [
             'profile' => [
@@ -57,15 +67,22 @@ class InsafController extends Controller
             ],
             'choices' => array_map('intval', $application?->choices ?? []),
             'receipt' => $this->receiptData($student, $application)['receipt'],
+            'demoModeEnabled' => $student->is_admin && $this->demoModeEnabled(),
+            'demoTamperAvailable' => $demoApplication,
         ];
+    }
+
+    private function demoModeEnabled(): bool
+    {
+        return app()->environment(['local', 'development', 'testing']) &&
+            filter_var(config('services.hedera.demo_mode'), FILTER_VALIDATE_BOOLEAN);
     }
 
     // The ministry and hacker buttons only exist for the demo
     private function demoOnly(): void
     {
         abort_unless(
-            app()->environment(['local', 'development', 'testing']) &&
-            filter_var(env('DEMO_MODE', false), FILTER_VALIDATE_BOOLEAN),
+            $this->demoModeEnabled(),
             403,
             'This action is only available in demo mode.'
         );
@@ -250,22 +267,50 @@ class InsafController extends Controller
         ]);
     }
 
-    // The "hacker" (demo only): silently rewrites the student's own record, like the Kef incident
+    // The demo administrator can alter only the seeded synthetic student record.
     public function tamper(Request $r, $code)
     {
         $this->demoOnly();
-        $this->ownOnly($r, $code);
 
-        $a = Student::where('code', $code)->firstOrFail()->application()->firstOrFail();
-        $orig = $a->choices;
-        $rev = array_reverse($orig);
+        abort_unless($code === self::DEMO_STUDENT_CODE, 404);
+        $demoStudent = Student::where('code', self::DEMO_STUDENT_CODE)->firstOrFail();
+        $a = $demoStudent->application()->firstOrFail();
+        abort_unless(
+            $a->receipt_sequence !== null &&
+            is_array($a->receipt_choices) &&
+            count($a->receipt_choices) >= 2 &&
+            is_string($a->receipt_salt) &&
+            $a->receipt_salt !== '',
+            409,
+            'The demo student must have a saved Hedera receipt before tampering can be demonstrated.'
+        );
+
+        $before = array_map('intval', $a->choices);
+        $originalChoices = array_map('intval', $a->receipt_choices);
+        $after = array_merge(array_slice($originalChoices, 1), [$originalChoices[0]]);
         $a->update([
-            'choices' => $rev,
-            'commitment' => Insaf::commit($code, $rev, $a->salt), // the attacker even fixes the hash
-            'placed_university_id' => $rev[0],
-            'placed_program_id' => University::find($rev[0])?->specialty_id,
+            'choices' => $after,
+            'commitment' => Insaf::commit($demoStudent->code, $after, $a->salt),
+            'placed_university_id' => $after[0],
+            'placed_program_id' => University::find($after[0])?->specialty_id,
         ]);
-        return ['tampered' => true];
+
+        return [
+            'tampered' => true,
+            'code' => $demoStudent->code,
+            'beforeChoices' => $before,
+            'afterChoices' => $after,
+            'receipt' => [
+                'code' => $demoStudent->code,
+                'score' => $demoStudent->score,
+                'choices' => $originalChoices,
+                'salt' => $a->receipt_salt,
+                'sequence' => (int) $a->receipt_sequence,
+                'tx' => $a->receipt_transaction_id,
+                'network' => $a->receipt_network ?? config('services.hedera.network'),
+                'topicId' => $a->receipt_topic_id ?? config('services.hedera.topic_id'),
+            ],
+        ];
     }
 
     // The student's check, done on their own receipt
@@ -280,9 +325,16 @@ class InsafController extends Controller
             'sequence' => 'required|integer|min:1',
             'tx' => 'nullable|string|max:100',
         ]);
-        $this->ownOnly($r, $d['code']);
+        $isDemoAdministrator = $r->user()->is_admin &&
+            $this->demoModeEnabled() &&
+            $d['code'] === self::DEMO_STUDENT_CODE;
+        if (!$isDemoAdministrator) {
+            $this->ownOnly($r, $d['code']);
+        }
 
-        $student = $r->user();
+        $student = $isDemoAdministrator
+            ? Student::where('code', self::DEMO_STUDENT_CODE)->firstOrFail()
+            : $r->user();
         $app = $student->application;
         if (
             !$app ||

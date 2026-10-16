@@ -26,6 +26,7 @@ class UniversitySelectionTest extends TestCase
             'services.hedera.network' => 'testnet',
             'services.hedera.topic_id' => '0.0.123',
             'services.hedera.mirror_node_url' => 'https://testnet.mirrornode.hedera.com',
+            'services.hedera.demo_mode' => false,
         ]);
     }
 
@@ -639,56 +640,108 @@ class UniversitySelectionTest extends TestCase
     {
         $this->seed();
         $application = Application::with('student')->firstOrFail();
+        $application->student->update(['is_admin' => true]);
         Sanctum::actingAs($application->student);
+        config(['services.hedera.demo_mode' => true]);
         $this->app->detectEnvironment(fn() => 'production');
 
         $this->postJson("/api/admin/tamper/{$application->student->code}")->assertForbidden();
     }
 
+    public function test_admin_can_tamper_demo_student_and_verify_against_preserved_hedera_receipt(): void
+    {
+        $this->seed();
+        $student = \App\Models\Student::where('code', 'S001')->firstOrFail();
+        $application = $this->createDemoApplication($student);
+        $originalChoices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $originalChoices);
+        $application->refresh();
+        $originalReceipt = [
+            'choices' => array_map('intval', $application->receipt_choices),
+            'salt' => $application->receipt_salt,
+            'hash' => $application->receipt_hash,
+            'transaction_id' => $application->receipt_transaction_id,
+            'network' => $application->receipt_network,
+            'topic_id' => $application->receipt_topic_id,
+            'sequence' => (int) $application->receipt_sequence,
+        ];
+        config(['services.hedera.demo_mode' => true]);
+        Http::fake([
+            '*' => Http::response([
+                'message' => base64_encode('c:' . $originalReceipt['hash']),
+                'topic_id' => '0.0.123',
+                'sequence_number' => 42,
+                'consensus_timestamp' => '1700000000.000000001',
+                'transaction_id' => $originalReceipt['transaction_id'],
+            ]),
+        ]);
+
+        Sanctum::actingAs($student);
+        $this->getJson('/api/dashboard')
+            ->assertOk()
+            ->assertJsonPath('demoTamperAvailable', false);
+        $this->postJson('/api/admin/run')->assertForbidden();
+        $this->postJson('/api/admin/tamper/S001')->assertForbidden();
+
+        $student->update(['is_admin' => true]);
+        Sanctum::actingAs($student->fresh());
+        $this->getJson('/api/dashboard')
+            ->assertOk()
+            ->assertJsonPath('demoTamperAvailable', true);
+
+        $tamperResponse = $this->postJson('/api/admin/tamper/S001')
+            ->assertOk()
+            ->assertJsonPath('tampered', true)
+            ->assertJsonPath('code', 'S001')
+            ->assertJsonPath('receipt.sequence', 42)
+            ->assertJsonPath('receipt.topicId', '0.0.123');
+        $beforeChoices = $tamperResponse->json('beforeChoices');
+        $afterChoices = $tamperResponse->json('afterChoices');
+        $this->assertSame($originalChoices, $beforeChoices);
+        $this->assertNotSame($originalChoices, $afterChoices);
+
+        $application->refresh();
+        $this->assertSame($originalReceipt['choices'], array_map('intval', $application->receipt_choices));
+        $this->assertSame($originalReceipt['salt'], $application->receipt_salt);
+        $this->assertSame($originalReceipt['hash'], $application->receipt_hash);
+        $this->assertSame($originalReceipt['transaction_id'], $application->receipt_transaction_id);
+        $this->assertSame($originalReceipt['network'], $application->receipt_network);
+        $this->assertSame($originalReceipt['topic_id'], $application->receipt_topic_id);
+        $this->assertSame($originalReceipt['sequence'], (int) $application->receipt_sequence);
+        $this->assertSame($afterChoices, array_map('intval', $application->choices));
+
+        $this->postJson('/api/verify', $tamperResponse->json('receipt'))
+            ->assertOk()
+            ->assertJsonPath('valid', false)
+            ->assertJsonPath('checks.0.ok', true)
+            ->assertJsonPath('checks.1.ok', false)
+            ->assertJsonPath('incident.originalHash', $originalReceipt['hash'])
+            ->assertJsonPath('incident.currentChoices', $afterChoices)
+            ->assertJsonPath('incident.hedera.topicId', '0.0.123');
+
+        Http::assertSent(fn($request) =>
+            str_contains($request->url(), '/api/v1/topics/0.0.123/messages/42')
+        );
+    }
+
     public function test_demo_actions_require_an_administrator_and_remain_available_in_testing_demo_mode(): void
     {
         $this->seed();
-        $application = Application::with('student')->firstOrFail();
-        $student = $application->student;
-        $previousEnv = getenv('DEMO_MODE');
-        $previousEnvValue = $_ENV['DEMO_MODE'] ?? null;
-        $hadEnvValue = array_key_exists('DEMO_MODE', $_ENV);
-        $previousServerValue = $_SERVER['DEMO_MODE'] ?? null;
-        $hadServerValue = array_key_exists('DEMO_MODE', $_SERVER);
-        putenv('DEMO_MODE=true');
-        $_ENV['DEMO_MODE'] = 'true';
-        $_SERVER['DEMO_MODE'] = 'true';
+        $student = \App\Models\Student::where('code', 'S001')->firstOrFail();
+        $application = $this->createDemoApplication($student);
+        $this->prepareReceipt($application, array_map('intval', $application->choices));
+        config(['services.hedera.demo_mode' => true]);
         $this->app->detectEnvironment(fn() => 'testing');
 
-        try {
-            Sanctum::actingAs($student);
-            $this->postJson('/api/admin/run')->assertForbidden();
-            $this->postJson("/api/admin/tamper/{$student->code}")->assertForbidden();
+        Sanctum::actingAs($student);
+        $this->postJson('/api/admin/run')->assertForbidden();
+        $this->postJson('/api/admin/tamper/S001')->assertForbidden();
 
-            $student->update(['is_admin' => true]);
-            Sanctum::actingAs($student->fresh());
-            $this->postJson("/api/admin/tamper/{$student->code}")
-                ->assertOk()
-                ->assertJson(['tampered' => true]);
-        } finally {
-            if ($previousEnv === false) {
-                putenv('DEMO_MODE');
-            } else {
-                putenv('DEMO_MODE=' . $previousEnv);
-            }
-
-            if ($hadEnvValue) {
-                $_ENV['DEMO_MODE'] = $previousEnvValue;
-            } else {
-                unset($_ENV['DEMO_MODE']);
-            }
-
-            if ($hadServerValue) {
-                $_SERVER['DEMO_MODE'] = $previousServerValue;
-            } else {
-                unset($_SERVER['DEMO_MODE']);
-            }
-        }
+        $student->update(['is_admin' => true]);
+        Sanctum::actingAs($student->fresh());
+        $this->postJson('/api/admin/tamper/S001')
+            ->assertOk()
+            ->assertJsonPath('tampered', true);
     }
 
     private function prepareIncidentSubmission(): array
@@ -774,6 +827,24 @@ class UniversitySelectionTest extends TestCase
             'receipt_consensus_timestamp' => null,
             'receipt_sequence' => 42,
             'receipt_submitted_at' => now(),
+        ]);
+    }
+
+    private function createDemoApplication(\App\Models\Student $student): Application
+    {
+        $choices = University::query()
+            ->orderBy('id')
+            ->limit(5)
+            ->pluck('id')
+            ->map(fn($id) => (int) $id)
+            ->all();
+        $salt = bin2hex(random_bytes(16));
+
+        return Application::create([
+            'student_id' => $student->id,
+            'choices' => $choices,
+            'salt' => $salt,
+            'commitment' => Insaf::commit($student->code, $choices, $salt),
         ]);
     }
 
