@@ -309,7 +309,7 @@ const translations = {
   fr: {
     brand: "Insaf",
     brandAr: " إنصاف",
-    sub: "Vérifiez que votre place est bien la vôtre",
+    sub: "Vérifiez que vos vœux correspondent à leur enregistrement Hedera",
     student: "Étudiant",
     scoreLabel: "Score d'orientation",
     placementLabel: "Affectation publiée",
@@ -337,9 +337,18 @@ const translations = {
     universityPhotoAlt: "Emplacement réservé à la photo de l’université",
     minimumSelection: "Choisissez au moins 3 universités pour valider vos vœux.",
     submit: "Valider et obtenir le reçu",
+    draftSaved: "Vœux enregistrés comme brouillon — non soumis.",
+    draftSaving: "Enregistrement du brouillon...",
+    applyCodeSent: "Un code de confirmation a été envoyé à",
+    applyCodeLabel: "Code de confirmation à 6 chiffres",
+    applyConfirm: "Confirmer et soumettre mes vœux",
+    applyResend: "Renvoyer le code",
+    applyLocked: "Vos vœux sont verrouillés jusqu’à la confirmation par e-mail.",
+    applyInvalidCode: "Code invalide ou expiré. Demandez un nouveau code.",
     receipt: "REÇU",
     receiptTitle: "Confirmation de vos vœux universitaires",
     receiptStatus: "Vœux enregistrés et empreinte ancrée",
+    alreadySubmitted: "Vous avez déjà soumis vos vœux universitaires.",
     receiptStudent: "Étudiant",
     receiptCode: "Code étudiant",
     receiptScore: "Score d'orientation",
@@ -362,16 +371,40 @@ const translations = {
     hash: "empreinte",
     tx: "transaction Hedera",
     seq: "séquence",
+    viewOnHashscan: "Voir sur HashScan",
+    rawRecord: "Enregistrement brut (Mirror Node)",
+    verifyCommitmentsTitle: "Vérifier les engagements de placement",
+    verifyCommitmentsDescription: "Comparez chaque engagement enregistré avec le message HCS et les données actuelles.",
+    commitmentLegend: "Vérifié = message HCS et données actuelles concordent · Données modifiées = données actuelles différentes · Remplacé = ancien engagement · En attente = indexation en cours · Indisponible = vérification impossible · Écart = message HCS différent.",
+    verifyCommitments: "Vérifier les engagements",
+    runPlacement: "Exécuter le placement et ancrer les engagements",
+    noCommitments: "Aucun engagement de placement n’a encore été ancré.",
+    commitmentSequence: "Séquence",
+    commitmentStatus: "Statut",
+    commitmentKinds: {
+      rules: "Règles",
+      merkle_root: "Racine de Merkle",
+      results: "Résultats",
+    },
+    commitmentStatuses: {
+      verified: "Vérifié",
+      data_changed: "Données modifiées",
+      superseded: "Remplacé",
+      chain_mismatch: "Écart sur Hedera",
+      pending: "En attente d’indexation",
+      unavailable: "Indisponible",
+    },
+    commitmentsUnavailable: "La vérification des engagements a échoué. Réessayez ultérieurement.",
 
-    s3: "2. Le pirate frappe",
+    s3: "2. Simulation d’altération",
     s4: "3. L'étudiant vérifie",
     placedFor: "Affectation publiée :",
     placementUnavailable: "Pas encore disponible",
     logout: "Déconnexion",
     back: "← Précédent",
 
-    s3Text: "Quelqu'un modifie discrètement le dossier de l'étudiant dans la base, comme dans l'affaire du Kef en août 2025.",
-    tamper: "Modifier mon dossier",
+    s3Text: "Simulation contrôlée d’une modification des préférences de démonstration dans la base de données.",
+    tamper: "Simuler une altération",
     demoTamperTitle: "Démonstration contrôlée — étudiant S001",
     demoTamperReceiptRequired: "L’étudiant S001 doit d’abord soumettre ses vœux et obtenir un reçu Hedera.",
     demoTamperBefore: "Préférences avant la modification",
@@ -386,36 +419,39 @@ const translations = {
     verify: "Vérifier mes vœux",
     verifyPending: "Vérification en attente de la confirmation du Mirror Node.",
     verifyError: "La vérification n’a pas pu être terminée. Aucun résultat positif n’est confirmé.",
-    integrityMismatch: "Integrity check failed. Your current preferences do not match the original submission recorded on Hedera.",
+    integrityMismatch: "Écart d’intégrité : les préférences actuelles ne correspondent pas à la soumission originale enregistrée sur Hedera. Cela ne détermine pas qui a effectué la modification.",
     generateIncidentPdf: "Generate Incident Report PDF",
     submitIncidentReport: "Submit Report to Administrator",
     incidentSubmitted: "Incident report submitted for administrator review.",
     adminIncidents: "Administrator incidents",
     incidentReports: "Incident reports",
+    studentProblemReport: "Signalement étudiant",
+    reportCategory: "Information concernée",
+    reportMessage: "Description",
+    problemCategories: { name: "Nom et prénom", institution: "Établissement", score: "Score d’orientation", other: "Autre" },
     selectIncident: "Select a report to inspect its hashes, status, and PDF.",
     downloadIncidentPdf: "Download incident PDF",
     updateIncidentStatus: "Update status",
     adminReviewNotes: "Notes d’examen",
     adminReviewNotesPlaceholder: "Consignez les constatations et les actions de suivi.",
-    valid: "Vos vœux sont vérifiés",
-    invalid: "Falsification détectée",
+    valid: "Le reçu correspond à Hedera et aux préférences actuelles",
+    invalid: "Écart d’intégrité détecté — enquête nécessaire",
     checks: [
-      "Mon reçu correspond à l'empreinte ancrée sur Hedera",
-      "Le dossier de la plateforme correspond à mon reçu",
-      "La base correspond à la racine de Merkle engagée avant le calcul",
-      "Mon affectation est justifiée par mon score et les seuils publiés",
+      "Le reçu correspond à l’enregistrement Hedera",
+      "Les préférences actuelles correspondent au reçu",
     ],
 
     busy: {
       apply: "Ancrage de votre reçu sur Hedera...",
-      tamper: "Le pirate modifie la base de données...",
+      applyConfirm: "Confirmation de vos vœux...",
+      tamper: "Simulation d’une modification des données...",
       verify: "Vérification auprès de Hedera...",
     },
   },
   en: {
     brand: "Insaf",
     brandAr: " إنصاف",
-    sub: "Verify that your place is really yours",
+    sub: "Check that your preferences match their Hedera record",
     student: "Student",
     scoreLabel: "Orientation score",
     placementLabel: "Published placement",
@@ -443,9 +479,18 @@ const translations = {
     universityPhotoAlt: "Placeholder for the university photo",
     minimumSelection: "Choose at least 3 universities to submit your preferences.",
     submit: "Submit and get receipt",
+    draftSaved: "Preferences saved as a draft — not submitted.",
+    draftSaving: "Saving draft...",
+    applyCodeSent: "A confirmation code was sent to",
+    applyCodeLabel: "6-digit confirmation code",
+    applyConfirm: "Confirm and submit my preferences",
+    applyResend: "Resend code",
+    applyLocked: "Your preferences are locked until you confirm by email.",
+    applyInvalidCode: "The code is invalid or expired. Request a new code.",
     receipt: "RECEIPT",
     receiptTitle: "Confirmation of your university preferences",
     receiptStatus: "Preferences recorded and fingerprint anchored",
+    alreadySubmitted: "You have already submitted your university preferences.",
     receiptStudent: "Student",
     receiptCode: "Student code",
     receiptScore: "Orientation score",
@@ -468,16 +513,40 @@ const translations = {
     hash: "hash",
     tx: "Hedera transaction",
     seq: "sequence",
+    viewOnHashscan: "View on HashScan",
+    rawRecord: "Raw record (Mirror Node)",
+    verifyCommitmentsTitle: "Verify placement commitments",
+    verifyCommitmentsDescription: "Compare each stored commitment with its HCS message and the current database state.",
+    commitmentLegend: "Verified = HCS message and current data agree · Data changed = current data differs · Superseded = an older commitment · Pending = indexing in progress · Unavailable = verification could not run · Mismatch = HCS message differs.",
+    verifyCommitments: "Verify commitments",
+    runPlacement: "Run placement and anchor commitments",
+    noCommitments: "No placement commitments have been anchored yet.",
+    commitmentSequence: "Sequence",
+    commitmentStatus: "Status",
+    commitmentKinds: {
+      rules: "Rules",
+      merkle_root: "Merkle root",
+      results: "Results",
+    },
+    commitmentStatuses: {
+      verified: "Verified",
+      data_changed: "Data changed",
+      superseded: "Superseded",
+      chain_mismatch: "Hedera mismatch",
+      pending: "Awaiting indexing",
+      unavailable: "Unavailable",
+    },
+    commitmentsUnavailable: "Commitment verification failed. Please try again later.",
 
-    s3: "2. The hacker strikes",
+    s3: "2. Controlled alteration demo",
     s4: "3. The student verifies",
     placedFor: "Published placement:",
     placementUnavailable: "Not available yet",
     logout: "Logout",
     back: "← Back",
 
-    s3Text: "Someone silently rewrites the student's record in the database, as in the Kef case of August 2025.",
-    tamper: "Change my record",
+    s3Text: "A controlled simulation changes the demo preferences stored in the database.",
+    tamper: "Simulate data alteration",
     demoTamperTitle: "Controlled demonstration — student S001",
     demoTamperReceiptRequired: "Student S001 must submit preferences and obtain a Hedera receipt first.",
     demoTamperBefore: "Preferences before modification",
@@ -492,19 +561,23 @@ const translations = {
     verify: "Verify my preferences",
     verifyPending: "Verification is waiting for the Mirror Node to confirm the record.",
     verifyError: "Verification could not be completed. No positive result is confirmed.",
-    integrityMismatch: "Integrity check failed. Your current preferences do not match the original submission recorded on Hedera.",
+    integrityMismatch: "Integrity discrepancy: current preferences differ from the original submission recorded on Hedera. This does not identify who made the change.",
     generateIncidentPdf: "Generate Incident Report PDF",
     submitIncidentReport: "Submit Report to Administrator",
     incidentSubmitted: "Incident report submitted for administrator review.",
     adminIncidents: "Administrator incidents",
     incidentReports: "Incident reports",
+    studentProblemReport: "Student report",
+    reportCategory: "Information concerned",
+    reportMessage: "Description",
+    problemCategories: { name: "Full name", institution: "Institution", score: "Orientation score", other: "Other" },
     selectIncident: "Select a report to inspect its hashes, status, and PDF.",
     downloadIncidentPdf: "Download incident PDF",
     updateIncidentStatus: "Update status",
     adminReviewNotes: "Review notes",
     adminReviewNotesPlaceholder: "Record findings and follow-up actions.",
-    valid: "Your preferences are verified",
-    invalid: "Tampering detected",
+    valid: "Receipt matches Hedera and the current preferences",
+    invalid: "Integrity discrepancy detected — further investigation required",
     checks: [
       "My receipt matches the hash anchored on Hedera",
       "The platform record matches my receipt",
@@ -512,7 +585,8 @@ const translations = {
 
     busy: {
       apply: "Anchoring your receipt on Hedera...",
-      tamper: "The hacker is editing the database...",
+      applyConfirm: "Confirming your preferences...",
+      tamper: "Simulating a data alteration...",
       verify: "Checking against Hedera...",
     },
   },
@@ -525,9 +599,16 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
   const [student, setStudent] = useState(null);
   const [choices, setChoices] = useState([]);
   const [receipt, setReceipt] = useState(null);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [applyConfirmationPending, setApplyConfirmationPending] = useState(false);
+  const [applyConfirmationEmail, setApplyConfirmationEmail] = useState("");
+  const [applyConfirmationCode, setApplyConfirmationCode] = useState("");
   const [demoModeEnabled, setDemoModeEnabled] = useState(false);
   const [demoTamperAvailable, setDemoTamperAvailable] = useState(false);
   const [demoTamperState, setDemoTamperState] = useState(null);
+  const [commitmentResults, setCommitmentResults] = useState(null);
+  const [commitmentError, setCommitmentError] = useState("");
+  const [commitmentBusy, setCommitmentBusy] = useState(false);
   const [incidentPdf, setIncidentPdf] = useState(null);
   const [incidentSubmission, setIncidentSubmission] = useState(null);
   const [incidentSubmissionBusy, setIncidentSubmissionBusy] = useState(false);
@@ -615,6 +696,11 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
       setProfile(data.profile);
       setChoices(data.choices.filter((id) => !retiredIds.has(id)));
       setReceipt(data.receipt);
+      setDraftSaved(data.draftSaved === true);
+      if (data.preferenceConfirmation) {
+        setApplyConfirmationPending(true);
+        setApplyConfirmationEmail(data.preferenceConfirmation.emailHint);
+      }
       setDemoModeEnabled(data.demoModeEnabled === true);
       setDemoTamperAvailable(data.demoTamperAvailable === true);
     }).catch((error) => {
@@ -644,21 +730,99 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
     setBusy("");
   };
 
-  const toggle = (id) => {
+  const toggle = async (id) => {
+    if (busy || applyConfirmationPending || receipt) return;
     setResult(null);
-    setChoices((currentChoices) =>
-      currentChoices.includes(id)
-        ? currentChoices.filter((choice) => choice !== id)
-        : [...currentChoices, id]
-    );
+    const nextChoices = choices.includes(id)
+      ? choices.filter((choice) => choice !== id)
+      : [...choices, id];
+    setBusy("draft");
+    try {
+      const { data } = await api.put("/application/draft", { choices: nextChoices });
+      setChoices(data.choices);
+      setDraftSaved(true);
+    } catch (error) {
+      alert(error.response?.data?.message || error.message);
+    } finally {
+      setBusy("");
+    }
   };
 
   const submit = () => act("apply", async () => {
     setResult(null);
-    const response = (await api.post("/apply", { code, choices })).data;
+    const response = (await api.post("/apply", { choices })).data;
+    setApplyConfirmationEmail(response.emailHint);
+    setApplyConfirmationCode("");
+    setApplyConfirmationPending(true);
+  });
+  const confirmSubmission = () => act("applyConfirm", async () => {
+    if (!/^\d{6}$/.test(applyConfirmationCode)) {
+      throw new Error(t.applyInvalidCode);
+    }
+    const response = (await api.post("/apply/confirm", { code: applyConfirmationCode })).data;
     setReceipt(response);
+    setChoices(response.choices);
+    setDraftSaved(false);
+    setApplyConfirmationPending(false);
+    setApplyConfirmationEmail("");
+    setApplyConfirmationCode("");
     navigatePage("receipt");
   });
+  const resendSubmissionCode = async () => {
+    setBusy("apply");
+    try {
+      const { data } = await api.post("/apply/resend");
+      setApplyConfirmationEmail(data.emailHint);
+      setApplyConfirmationCode("");
+    } catch (error) {
+      if (error.response?.data?.error === "confirmation_expired") {
+        setApplyConfirmationPending(false);
+        setApplyConfirmationCode("");
+        setApplyConfirmationEmail("");
+      }
+      alert(error.response?.data?.message || error.message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const applyAction = () => (applyConfirmationPending ? (
+    <form
+      className="ins-apply-confirmation"
+      onSubmit={(event) => {
+        event.preventDefault();
+        confirmSubmission();
+      }}
+    >
+      <p className="ins-text">{t.applyCodeSent} {applyConfirmationEmail}.</p>
+      <p className="ins-text">{t.applyLocked}</p>
+      <label className="ins-flabel" htmlFor="apply-confirm-code">{t.applyCodeLabel}</label>
+      <input
+        id="apply-confirm-code"
+        className="ins-input"
+        type="text"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={6}
+        value={applyConfirmationCode}
+        onChange={(event) => setApplyConfirmationCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+      />
+      <div className="ins-actions">
+        <button className="ins-btn" type="submit" disabled={!!busy || applyConfirmationCode.length !== 6}>
+          {t.applyConfirm}
+        </button>
+        <button className="ins-btn ins-btn-ghost" type="button" disabled={!!busy} onClick={resendSubmissionCode}>
+          {t.applyResend}
+        </button>
+      </div>
+    </form>
+  ) : (
+    <>
+      {draftSaved && <p className="ins-text" role="status">{busy === "draft" ? t.draftSaving : t.draftSaved}</p>}
+      {!receipt && <button className="ins-btn" disabled={choices.length < 3 || !!busy} onClick={submit}>
+        {t.submit}
+      </button>}
+    </>
+  ));
   const tamper = () => act("tamper", async () => {
     setResult(null);
     setDemoTamperState(null);
@@ -667,8 +831,24 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
     try {
       const { data } = await api.post("/admin/tamper/S001");
       setDemoTamperState(data);
-      const verification = await api.post("/verify", data.receipt);
-      setResult(verification.data);
+      const [receiptCheck, commitmentsCheck] = await Promise.allSettled([
+        api.post("/verify", data.receipt),
+        api.get("/commitments/verify"),
+      ]);
+      if (receiptCheck.status === "fulfilled") {
+        setResult(receiptCheck.value.data);
+      } else {
+        setResult({
+          verificationError: receiptCheck.reason.response?.data?.message || receiptCheck.reason.message,
+        });
+      }
+      if (commitmentsCheck.status === "fulfilled") {
+        setCommitmentResults(commitmentsCheck.value.data.commitments);
+        setCommitmentError("");
+      } else {
+        setCommitmentResults(null);
+        setCommitmentError(commitmentsCheck.reason.response?.data?.message || commitmentsCheck.reason.message);
+      }
     } catch (error) {
       setResult({
         verificationError: error.response?.data?.message || error.message,
@@ -689,6 +869,33 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
       throw error;
     }
   });
+  const verifyCommitments = async () => {
+    setCommitmentBusy(true);
+    setCommitmentError("");
+    try {
+      const { data } = await api.get("/commitments/verify");
+      setCommitmentResults(data.commitments);
+    } catch (error) {
+      setCommitmentError(error.response?.data?.message || error.message);
+      setCommitmentResults(null);
+    } finally {
+      setCommitmentBusy(false);
+    }
+  };
+  const runPlacement = async () => {
+    setCommitmentBusy(true);
+    setCommitmentError("");
+    try {
+      await api.post("/admin/run");
+      const { data } = await api.get("/commitments/verify");
+      setCommitmentResults(data.commitments);
+    } catch (error) {
+      setCommitmentError(error.response?.data?.message || error.message);
+      setCommitmentResults(null);
+    } finally {
+      setCommitmentBusy(false);
+    }
+  };
   const generateIncidentPdf = async () => {
     if (!result?.incident) return;
     try {
@@ -827,7 +1034,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                       disabled={adminActionBusy}
                     >
                       <strong>{report.incident_id}</strong>
-                      <span>{report.student?.code ?? "-"} · {report.submission_reference} · {report.status}</span>
+                      <span>{report.student?.code ?? "-"} · {report.report_type === "student_problem" ? t.studentProblemReport : report.submission_reference} · {report.status}</span>
                     </button>
                   ))}
                 </div>
@@ -835,6 +1042,13 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
               {selectedAdminReport && (
                 <article className="ins-admin-report-detail">
                   <h3>{selectedAdminReport.id}</h3>
+                  {selectedAdminReport.reportType === "student_problem" ? (
+                    <dl className="ins-receipt-proof">
+                      <div><dt>{t.student}</dt><dd>{selectedAdminReport.studentReference}</dd></div>
+                      <div><dt>{t.reportCategory}</dt><dd>{t.problemCategories[selectedAdminReport.report.category] ?? selectedAdminReport.report.category}</dd></div>
+                      <div><dt>{t.reportMessage}</dt><dd>{selectedAdminReport.report.message}</dd></div>
+                    </dl>
+                  ) : (
                   <dl className="ins-receipt-proof">
                     <div><dt>Student/submission reference</dt><dd>{selectedAdminReport.studentReference} / {selectedAdminReport.submissionReference}</dd></div>
                     <div><dt>Original SHA-256</dt><dd>{selectedAdminReport.originalHash}</dd></div>
@@ -856,6 +1070,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                         : `#${id}`}`;
                     }).join(" · ")}</dd></div>
                   </dl>
+                  )}
                   <label className="ins-admin-status-control">
                     Report status
                     <select value={adminReportStatus} onChange={(event) => setAdminReportStatus(event.target.value)}>
@@ -879,9 +1094,11 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                     <button className="ins-btn" type="button" disabled={adminActionBusy} onClick={saveAdminIncidentStatus}>
                       {t.updateIncidentStatus}
                     </button>
-                    <button className="ins-btn" type="button" disabled={adminActionBusy} onClick={downloadAdminIncidentPdf}>
-                      {t.downloadIncidentPdf}
-                    </button>
+                    {selectedAdminReport.reportType !== "student_problem" && (
+                      <button className="ins-btn" type="button" disabled={adminActionBusy} onClick={downloadAdminIncidentPdf}>
+                        {t.downloadIncidentPdf}
+                      </button>
+                    )}
                   </div>
                 </article>
               )}
@@ -935,6 +1152,21 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                     <div><dt>{t.seq}</dt><dd>{receipt.sequence}</dd></div>
                     <div><dt>{t.consensusTimestamp}</dt><dd>{receipt.consensusTimestamp ?? "-"}</dd></div>
                   </dl>
+                  {receipt.hashscanUrl && (
+                    <p>
+                      <a href={receipt.hashscanUrl} target="_blank" rel="noopener noreferrer">
+                        {t.viewOnHashscan}
+                      </a>
+                      {receipt.rawRecordUrl && (
+                        <>
+                          {" · "}
+                          <a href={receipt.rawRecordUrl} target="_blank" rel="noopener noreferrer">
+                            {t.rawRecord}
+                          </a>
+                        </>
+                      )}
+                    </p>
+                  )}
                   <div className="ins-print-actions">
                     <button
                       className="ins-btn"
@@ -1044,6 +1276,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                               className={"ins-btn ins-university-select" + (selected ? " selected" : "")}
                               type="button"
                               aria-pressed={selected}
+                              disabled={applyConfirmationPending || !!receipt || !!busy}
                               onClick={() => toggle(university.id)}
                             >
                               {selected ? t.remove : t.select}
@@ -1053,9 +1286,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                       })}
                     </div>
                     <p className="ins-university-note">{t.indicativeNote}</p>
-                    <button className="ins-btn" disabled={choices.length < 3 || !!busy} onClick={submit}>
-                      {t.submit}
-                    </button>
+                    {applyAction()}
                     {receipt && (
                       <button className="ins-btn" type="button" onClick={() => navigatePage("receipt")}>
                         {t.viewReceipt}
@@ -1113,9 +1344,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                     : null;
                 }).filter(Boolean).join(" · ")}</p>
               : <p className="ins-text">{t.minimumSelection}</p>}
-            <button className="ins-btn" disabled={choices.length < 3 || !!busy} onClick={submit}>
-              {t.submit}
-            </button>
+            {applyAction()}
             {receipt && (
               <div className="ins-saved-receipt">
                 <p className="ins-text">{t.savedReceipt}</p>
@@ -1128,6 +1357,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
 
           {/* 2. Preference score comparison */}
           <section className="ins-section">
+            {receipt && <p className="ins-text" role="status">{t.alreadySubmitted}</p>}
             <h3 className="ins-score-table-title">{t.s1Label}</h3>
             {choices.length > 0 ? (
               <div className="ins-score-table-wrap">
@@ -1191,6 +1421,59 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
             </section>
           )}
 
+          <section className="ins-section">
+            <h2 className="ins-section-title">{t.verifyCommitmentsTitle}</h2>
+            <p className="ins-text">{t.verifyCommitmentsDescription}</p>
+            <p className="ins-commitment-legend">{t.commitmentLegend}</p>
+            <div className="ins-print-actions">
+              <button
+                className="ins-btn"
+                type="button"
+                disabled={commitmentBusy || !!busy}
+                onClick={verifyCommitments}
+              >
+                {t.verifyCommitments}
+              </button>
+              {profile?.is_admin && demoModeEnabled && (
+                <button
+                  className="ins-btn"
+                  type="button"
+                  disabled={commitmentBusy || !!busy}
+                  onClick={runPlacement}
+                >
+                  {t.runPlacement}
+                </button>
+              )}
+            </div>
+            {commitmentError && <p className="ins-admin-error" role="alert">{commitmentError}</p>}
+            {commitmentResults?.length > 0 && (
+              <div className="ins-commitment-list">
+                {commitmentResults.map((commitment, index) => (
+                  <article className="ins-commitment-item" key={`${commitment.kind}-${commitment.sequence}-${index}`}>
+                    <div>
+                      <strong>{t.commitmentKinds[commitment.kind] ?? commitment.kind}</strong>
+                      <span>{t.commitmentSequence}: {commitment.sequence}</span>
+                    </div>
+                    <span className={`ins-commitment-status status-${commitment.status.replaceAll("_", "-")}`}>
+                      {t.commitmentStatuses[commitment.status] ?? commitment.status}
+                    </span>
+                    {commitment.hashscanUrl && (
+                      <a href={commitment.hashscanUrl} target="_blank" rel="noopener noreferrer">
+                        {t.viewOnHashscan}
+                      </a>
+                    )}
+                    {commitment.rawRecordUrl && (
+                      <a href={commitment.rawRecordUrl} target="_blank" rel="noopener noreferrer">
+                        {t.rawRecord}
+                      </a>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+            {commitmentResults?.length === 0 && <p className="ins-text">{t.noCommitments}</p>}
+          </section>
+
           {/* 3. Verify */}
           <section className="ins-section">
             <h2 className="ins-section-title">{t.s4}</h2>
@@ -1206,6 +1489,13 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                   {demoTamperState.receipt.network} · {demoTamperState.receipt.topicId} ·{" "}
                   {lang === "en" ? "sequence" : "séquence"} {demoTamperState.receipt.sequence}
                 </p>
+                {demoTamperState.receipt.rawRecordUrl && (
+                  <p>
+                    <a href={demoTamperState.receipt.rawRecordUrl} target="_blank" rel="noopener noreferrer">
+                      {t.rawRecord}
+                    </a>
+                  </p>
+                )}
                 <p>{t.demoTamperExplanation}</p>
               </div>
             )}

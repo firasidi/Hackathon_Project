@@ -7,7 +7,7 @@ const tr = {
   fr: {
     brand: "Insaf",
     brandAr: " إنصاف",
-    sub: "Vérifiez que votre place est bien la vôtre",
+    sub: "Vérifiez que vos vœux correspondent à leur enregistrement Hedera",
 
     loginTitle: "Connexion sécurisée",
     loginBadge: "CIN",
@@ -58,7 +58,7 @@ const tr = {
   en: {
     brand: "Insaf",
     brandAr: " إنصاف",
-    sub: "Verify that your place is really yours",
+    sub: "Check that your preferences match their Hedera record",
 
     loginTitle: "Secure login",
     loginBadge: "CIN",

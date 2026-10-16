@@ -755,6 +755,38 @@ body { margin: 0; }
 .ins-result.ok h2 { color: var(--ok-text); }
 .ins-result.ko h2 { color: var(--ko-text); }
 .ins-check { font-size: 14px; color: var(--text); padding: 5px 0; }
+.ins-commitment-list { display: grid; gap: 10px; margin-top: 18px; }
+.ins-commitment-item {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--soft-border);
+  border-radius: 4px;
+  background: var(--soft-bg);
+  color: var(--text);
+}
+.ins-commitment-item > div { display: grid; gap: 5px; }
+.ins-commitment-item > div span { font-size: 13px; opacity: 0.8; }
+.ins-commitment-legend { font-size: 12px; line-height: 1.5; color: var(--text); opacity: 0.8; }
+.ins-commitment-status {
+  padding: 5px 9px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ins-commitment-status.status-verified { color: #217a3c; background: rgba(40, 140, 70, 0.1); }
+.ins-commitment-status.status-data-changed,
+.ins-commitment-status.status-chain-mismatch { color: #aa3535; background: rgba(220, 50, 50, 0.09); }
+.ins-commitment-status.status-pending,
+.ins-commitment-status.status-unavailable { color: #8c6d3f; background: rgba(140, 109, 63, 0.1); }
+.ins-commitment-status.status-superseded { color: var(--text); background: var(--soft-bg); opacity: 0.75; }
+@media (max-width: 620px) {
+  .ins-commitment-item { grid-template-columns: 1fr; justify-items: start; }
+}
 .ins-admin-report-list {
   display: grid;
   gap: 8px;
