@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\Application;
-use App\Models\Program;
 use App\Models\University;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
@@ -30,6 +29,83 @@ class Insaf
             $leaves = $next;
         }
         return $leaves[0];
+    }
+
+    public static function rulesHash(): string
+    {
+        $rules = json_encode([
+            'formula' => 'score desc, tie by code asc, first university choice with a free seat',
+            'capacities' => University::orderBy('id')->pluck('capacity', 'id'),
+        ], JSON_THROW_ON_ERROR);
+
+        return hash('sha256', $rules);
+    }
+
+    public static function preferencesMerkleRoot(): string
+    {
+        $leaves = Application::with('student')->get()
+            ->map(fn($application) => self::commit(
+                $application->student->code,
+                $application->choices,
+                $application->salt
+            ))
+            ->all();
+
+        return self::merkleRoot($leaves);
+    }
+
+    public static function resultsHash(): string
+    {
+        $results = Application::with('student')->orderBy('id')->get()
+            ->map(fn($application) => $application->student->code . ':' . $application->placed_university_id)
+            ->implode(',');
+        $cutoffs = University::orderBy('id')->get()
+            ->map(fn($university) => "{$university->id}:{$university->admitted}:{$university->cutoff_score}:{$university->cutoff_code}")
+            ->implode(',');
+
+        return hash('sha256', $results . '|' . $cutoffs);
+    }
+
+    public static function recomputeCommitmentHash(string $kind): ?string
+    {
+        return match ($kind) {
+            'rules' => self::rulesHash(),
+            'merkle_root' => self::preferencesMerkleRoot(),
+            'results' => self::resultsHash(),
+            default => null,
+        };
+    }
+
+    public static function hashscanUrls(string $network, ?string $topicId, ?string $transactionId): array
+    {
+        if (!in_array($network, ['testnet', 'mainnet'], true) ||
+            !is_string($topicId) ||
+            !preg_match('/^\d+\.\d+\.\d+$/', $topicId)) {
+            return ['topic' => null, 'transaction' => null];
+        }
+
+        $baseUrl = 'https://hashscan.io/' . $network;
+        $topicUrl = "{$baseUrl}/topic/{$topicId}";
+        $transactionUrl = is_string($transactionId) &&
+            preg_match('/^\d+\.\d+\.\d+@\d+\.\d+$/', $transactionId)
+            ? "{$baseUrl}/transaction/{$transactionId}"
+            : null;
+
+        return ['topic' => $topicUrl, 'transaction' => $transactionUrl];
+    }
+
+    public static function mirrorNodeRecordUrl(?string $topicId, ?int $sequence): ?string
+    {
+        $mirrorNodeUrl = rtrim((string) config('services.hedera.mirror_node_url'), '/');
+        if ($mirrorNodeUrl === '' ||
+            !is_string($topicId) ||
+            !preg_match('/^\d+\.\d+\.\d+$/', $topicId) ||
+            !is_int($sequence) ||
+            $sequence < 1) {
+            return null;
+        }
+
+        return "{$mirrorNodeUrl}/api/v1/topics/{$topicId}/messages/{$sequence}";
     }
 
     // Write a message on Hedera by running our small Node script

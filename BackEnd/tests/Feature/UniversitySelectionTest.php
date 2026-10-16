@@ -3,12 +3,26 @@
 namespace Tests\Feature;
 
 use App\Models\Application;
+use App\Models\Commitment;
+use App\Models\IncidentReport;
+use App\Models\PendingPreferenceSubmission;
+use App\Models\PreferenceDraft;
+use App\Models\ProfileChangeCode;
+use App\Models\Program;
+use App\Models\ResetCode;
+use App\Models\Student;
 use App\Models\University;
+use App\Mail\ProfileChangeCodeMail;
+use App\Mail\PreferenceSubmissionCodeMail;
 use App\Services\Insaf;
+use Illuminate\Console\Command as ConsoleCommand;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Facades\Artisan;
 use Laravel\Sanctum\Sanctum;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
@@ -87,6 +101,28 @@ class UniversitySelectionTest extends TestCase
             ]);
     }
 
+    public function test_student_can_save_and_reload_unsubmitted_preference_draft(): void
+    {
+        $this->seed();
+        $student = Student::where('code', 'S001')->firstOrFail();
+        Sanctum::actingAs($student);
+        $choices = University::query()->orderBy('id')->limit(4)->pluck('id')->map(fn($id) => (int) $id)->all();
+
+        $this->putJson('/api/application/draft', ['choices' => $choices])
+            ->assertOk()
+            ->assertJsonPath('choices', $choices)
+            ->assertJsonPath('saved', true)
+            ->assertJsonPath('submitted', false);
+
+        $this->assertSame($choices, array_map('intval', PreferenceDraft::where('student_id', $student->id)->firstOrFail()->choices));
+        $this->assertNull($student->application?->receipt_sequence);
+        $this->getJson('/api/application')->assertOk()->assertJsonPath('choices', $choices);
+        $this->getJson('/api/dashboard')->assertOk()
+            ->assertJsonPath('choices', $choices)
+            ->assertJsonPath('draftSaved', true)
+            ->assertJsonPath('receipt', null);
+    }
+
     public function test_dashboard_bootstrap_returns_all_initial_student_data_in_one_request(): void
     {
         $this->seed();
@@ -120,6 +156,251 @@ class UniversitySelectionTest extends TestCase
     public function test_dashboard_bootstrap_requires_authentication(): void
     {
         $this->getJson('/api/dashboard')->assertUnauthorized();
+    }
+
+    public function test_profile_contact_changes_require_email_code_and_commit_only_after_confirmation(): void
+    {
+        $this->seed();
+        $student = Student::firstOrFail();
+        $currentEmail = 'student.current@example.test';
+        $student->update(['email' => $currentEmail, 'phone' => '11112222', 'city' => 'Tunis']);
+        Sanctum::actingAs($student);
+        Mail::fake();
+
+        $this->postJson('/api/profile/contact-change', [
+            'email' => 'student.new@example.test',
+            'phone' => '33334444',
+            'city' => 'Sfax',
+        ])
+            ->assertOk()
+            ->assertJsonPath('emailHint', 's******@example.test')
+            ->assertJsonMissingPath('code');
+
+        $pending = ProfileChangeCode::where('student_id', $student->id)->firstOrFail();
+        $this->assertTrue(Hash::check(
+            Mail::sent(ProfileChangeCodeMail::class)->first()->code,
+            $pending->code_hash
+        ));
+        $this->assertSame($currentEmail, $pending->original_email);
+        $this->assertSame($currentEmail, $student->fresh()->email);
+        $this->assertSame('11112222', $student->fresh()->phone);
+        Mail::assertSent(ProfileChangeCodeMail::class, fn($mail) => $mail->hasTo($currentEmail));
+
+        $code = Mail::sent(ProfileChangeCodeMail::class)->first()->code;
+        $this->postJson('/api/profile/contact-change/confirm', ['code' => $code])
+            ->assertOk()
+            ->assertJsonPath('email', 'student.new@example.test')
+            ->assertJsonPath('phone', '33334444')
+            ->assertJsonPath('city', 'Sfax');
+
+        $this->assertSame('student.new@example.test', $student->fresh()->email);
+        $this->assertSame('33334444', $student->fresh()->phone);
+        $this->assertDatabaseMissing('profile_change_codes', ['student_id' => $student->id]);
+    }
+
+    public function test_phone_only_change_sends_code_to_current_email_and_keeps_email(): void
+    {
+        $this->seed();
+        $student = Student::firstOrFail();
+        $student->update(['email' => 'student.current@example.test', 'phone' => '11112222', 'city' => 'Tunis']);
+        Sanctum::actingAs($student);
+        Mail::fake();
+
+        $this->postJson('/api/profile/contact-change', [
+            'phone' => '99998888',
+        ])->assertOk();
+
+        Mail::assertSent(
+            ProfileChangeCodeMail::class,
+            fn($mail) => $mail->hasTo('student.current@example.test')
+        );
+        $this->assertSame('student.current@example.test', $student->fresh()->email);
+        $this->assertSame('11112222', $student->fresh()->phone);
+        $this->assertSame('Tunis', $student->fresh()->city);
+
+        $code = Mail::sent(ProfileChangeCodeMail::class)->first()->code;
+        $this->postJson('/api/profile/contact-change/confirm', ['code' => $code])
+            ->assertOk()
+            ->assertJsonPath('email', 'student.current@example.test')
+            ->assertJsonPath('phone', '99998888')
+            ->assertJsonPath('city', 'Tunis');
+    }
+
+    public function test_email_only_change_preserves_phone_and_city_when_omitted(): void
+    {
+        $this->seed();
+        $student = Student::firstOrFail();
+        $student->update([
+            'email' => 'student.current@example.test',
+            'phone' => '11112222',
+            'city' => 'Tunis',
+        ]);
+        Sanctum::actingAs($student);
+        Mail::fake();
+
+        $this->postJson('/api/profile/contact-change', [
+            'email' => 'student.new@example.test',
+        ])->assertOk();
+
+        $code = Mail::sent(ProfileChangeCodeMail::class)->first()->code;
+        $this->postJson('/api/profile/contact-change/confirm', ['code' => $code])
+            ->assertOk()
+            ->assertJsonPath('email', 'student.new@example.test')
+            ->assertJsonPath('phone', '11112222')
+            ->assertJsonPath('city', 'Tunis');
+    }
+
+    public function test_contact_change_reports_an_in_use_email_without_mislabeling_it_as_invalid(): void
+    {
+        $this->seed();
+        $students = Student::take(2)->get();
+        $student = $students[0];
+        $otherStudent = $students[1];
+        $student->update(['email' => 'student.current@example.test']);
+        $otherStudent->update(['email' => 'student.taken@example.test']);
+        Sanctum::actingAs($student);
+        Mail::fake();
+
+        $this->postJson('/api/profile/contact-change', [
+            'email' => 'student.taken@example.test',
+            'phone' => null,
+            'city' => null,
+        ])->assertConflict()
+            ->assertJsonPath('error', 'email_unavailable');
+
+        $this->assertDatabaseMissing('profile_change_codes', ['student_id' => $student->id]);
+        Mail::assertNothingSent();
+    }
+
+    public function test_contact_change_trims_surrounding_email_whitespace_before_validation(): void
+    {
+        $this->seed();
+        $student = Student::firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
+        Sanctum::actingAs($student);
+        Mail::fake();
+
+        $this->postJson('/api/profile/contact-change', [
+            'email' => ' student.new@example.test ',
+            'phone' => null,
+            'city' => null,
+        ])->assertOk();
+
+        $this->assertDatabaseHas('profile_change_codes', [
+            'student_id' => $student->id,
+            'pending_email' => 'student.new@example.test',
+        ]);
+        Mail::assertSent(ProfileChangeCodeMail::class);
+    }
+
+    public function test_direct_profile_update_cannot_bypass_contact_change_verification(): void
+    {
+        $this->seed();
+        $student = Student::firstOrFail();
+        $student->update(['email' => 'student.current@example.test', 'phone' => '11112222']);
+        Sanctum::actingAs($student);
+
+        $this->putJson('/api/profile', [
+            'email' => 'student.new@example.test',
+            'phone' => '33334444',
+            'city' => 'Sfax',
+        ])->assertUnprocessable()
+            ->assertJsonPath('error', 'verification_required');
+
+        $this->assertSame('student.current@example.test', $student->fresh()->email);
+        $this->assertSame('11112222', $student->fresh()->phone);
+    }
+
+    public function test_profile_change_codes_are_separate_from_password_reset_codes(): void
+    {
+        $this->seed();
+        $student = Student::firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
+        ResetCode::create([
+            'student_id' => $student->id,
+            'code_hash' => Hash::make('123456'),
+            'expires_at' => now()->addMinutes(10),
+            'attempts' => 0,
+        ]);
+        Sanctum::actingAs($student);
+        Mail::fake();
+
+        $this->postJson('/api/profile/contact-change', [
+            'email' => 'student.new@example.test',
+            'phone' => null,
+            'city' => null,
+        ])->assertOk();
+
+        $this->assertDatabaseHas('reset_codes', ['student_id' => $student->id]);
+        $this->assertDatabaseHas('profile_change_codes', ['student_id' => $student->id]);
+    }
+
+    public function test_contact_change_is_not_accepted_when_mailer_would_only_log_the_code(): void
+    {
+        $this->seed();
+        $student = Student::firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
+        Sanctum::actingAs($student);
+        config(['mail.default' => 'log']);
+        $this->app->detectEnvironment(fn() => 'local');
+
+        $this->postJson('/api/profile/contact-change', [
+            'email' => 'student.new@example.test',
+            'phone' => null,
+            'city' => null,
+        ])->assertServiceUnavailable()
+            ->assertJsonPath('error', 'email_delivery_unconfigured');
+
+        $this->assertDatabaseMissing('profile_change_codes', ['student_id' => $student->id]);
+        $this->assertSame('student.current@example.test', $student->fresh()->email);
+    }
+
+    public function test_profile_change_code_is_single_use_and_failed_codes_are_limited(): void
+    {
+        $this->seed();
+        $student = Student::firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
+        Sanctum::actingAs($student);
+        Mail::fake();
+
+        $this->postJson('/api/profile/contact-change', [
+            'email' => 'student.new@example.test',
+            'phone' => '55556666',
+            'city' => null,
+        ])->assertOk();
+
+        $actualCode = Mail::sent(ProfileChangeCodeMail::class)->first()->code;
+        $wrongCode = str_pad((string) (((int) $actualCode + 1) % 1000000), 6, '0', STR_PAD_LEFT);
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->postJson('/api/profile/contact-change/confirm', ['code' => $wrongCode])
+                ->assertUnprocessable()
+                ->assertJsonPath('error', 'invalid_code');
+        }
+        $this->postJson('/api/profile/contact-change/confirm', ['code' => $actualCode])
+            ->assertUnprocessable()
+            ->assertJsonPath('error', 'invalid_code');
+        $this->assertSame('student.current@example.test', $student->fresh()->email);
+    }
+
+    public function test_cancelling_profile_change_invalidates_the_pending_code(): void
+    {
+        $this->seed();
+        $student = Student::firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
+        Sanctum::actingAs($student);
+        Mail::fake();
+
+        $this->postJson('/api/profile/contact-change', [
+            'email' => 'student.new@example.test',
+            'phone' => null,
+            'city' => null,
+        ])->assertOk();
+        $this->deleteJson('/api/profile/contact-change')->assertOk();
+
+        $this->assertDatabaseMissing('profile_change_codes', ['student_id' => $student->id]);
+        $this->postJson('/api/profile/contact-change/confirm', ['code' => '123456'])
+            ->assertUnprocessable()
+            ->assertJsonPath('error', 'invalid_code');
     }
 
     public function test_student_endpoint_returns_placement_name_in_both_languages(): void
@@ -212,6 +493,7 @@ class UniversitySelectionTest extends TestCase
     {
         $this->seed();
         $student = \App\Models\Student::where('code', 'S001')->firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
         $choices = University::query()
             ->orderBy('id')
             ->limit(3)
@@ -219,6 +501,8 @@ class UniversitySelectionTest extends TestCase
             ->map(fn($id) => (int) $id)
             ->all();
         Sanctum::actingAs($student);
+        $this->putJson('/api/application/draft', ['choices' => $choices])->assertOk();
+        Mail::fake();
         Process::fake([
             '*' => Process::result(json_encode([
                 'transactionId' => '0.0.123@1700000000.000000001',
@@ -228,7 +512,21 @@ class UniversitySelectionTest extends TestCase
             ], JSON_THROW_ON_ERROR)),
         ]);
 
-        $response = $this->postJson('/api/apply', ['choices' => $choices])
+        $this->postJson('/api/apply', ['choices' => $choices])
+            ->assertOk()
+            ->assertJsonPath('confirmationRequired', true)
+            ->assertJsonMissingPath('hash')
+            ->assertJsonMissingPath('code');
+
+        Mail::assertSent(PreferenceSubmissionCodeMail::class, fn($mail) => $mail->hasTo($student->email));
+        $pending = PendingPreferenceSubmission::where('student_id', $student->id)->firstOrFail();
+        $code = Mail::sent(PreferenceSubmissionCodeMail::class)->first()->code;
+        $this->assertTrue(Hash::check($code, $pending->code_hash));
+        $this->assertNull($student->application()->first()?->receipt_sequence);
+        $this->assertDatabaseMissing('applications', ['student_id' => $student->id]);
+        $this->assertSame($choices, array_map('intval', PreferenceDraft::where('student_id', $student->id)->firstOrFail()->choices));
+
+        $response = $this->postJson('/api/apply/confirm', ['code' => $code])
             ->assertOk()
             ->assertJsonPath('network', 'testnet')
             ->assertJsonPath('topicId', '0.0.123')
@@ -246,6 +544,114 @@ class UniversitySelectionTest extends TestCase
             in_array('send.js', (array) $process->command, true) &&
             ($process->environment['TOPIC_ID'] ?? null) === '0.0.123'
         );
+        $this->assertDatabaseMissing('pending_preference_submissions', ['student_id' => $student->id]);
+    }
+
+    public function test_preferences_are_not_anchored_until_email_confirmation_and_invalid_codes_do_not_submit(): void
+    {
+        $this->seed();
+        $student = Student::where('code', 'S001')->firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
+        $choices = University::query()->orderBy('id')->limit(3)->pluck('id')->map(fn($id) => (int) $id)->all();
+        Sanctum::actingAs($student);
+        $this->putJson('/api/application/draft', ['choices' => $choices])->assertOk();
+        Mail::fake();
+        Process::fake();
+
+        $this->postJson('/api/apply', ['choices' => $choices])
+            ->assertOk()
+            ->assertJsonPath('confirmationRequired', true);
+        $actualCode = Mail::sent(PreferenceSubmissionCodeMail::class)->first()->code;
+        $wrongCode = str_pad((string) (((int) $actualCode + 1) % 1000000), 6, '0', STR_PAD_LEFT);
+        $this->postJson('/api/apply/confirm', ['code' => $wrongCode])
+            ->assertUnprocessable()
+            ->assertJsonPath('error', 'invalid_code');
+
+        $this->assertNull($student->application()->first()?->receipt_sequence);
+        $this->assertDatabaseMissing('applications', ['student_id' => $student->id]);
+        $this->assertDatabaseHas('pending_preference_submissions', ['student_id' => $student->id]);
+        $this->putJson('/api/application/draft', ['choices' => array_reverse($choices)])
+            ->assertConflict()
+            ->assertJsonPath('message', 'Preferences are locked until email confirmation is completed.');
+        Process::assertNotRan(fn() => true);
+    }
+
+    public function test_pending_preference_submission_can_resend_code_without_changing_locked_draft(): void
+    {
+        $this->seed();
+        $student = Student::where('code', 'S001')->firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
+        $choices = University::query()->orderBy('id')->limit(3)->pluck('id')->map(fn($id) => (int) $id)->all();
+        Sanctum::actingAs($student);
+        Mail::fake();
+        Process::fake();
+
+        $this->putJson('/api/application/draft', ['choices' => $choices])->assertOk();
+        $this->postJson('/api/apply', ['choices' => $choices])->assertOk();
+        $firstCode = Mail::sent(PreferenceSubmissionCodeMail::class)->first()->code;
+        $this->postJson('/api/apply/resend')
+            ->assertOk()
+            ->assertJsonPath('emailHint', 's******@example.test');
+
+        $this->assertDatabaseHas('pending_preference_submissions', ['student_id' => $student->id]);
+        $this->assertDatabaseMissing('applications', ['student_id' => $student->id]);
+        $this->assertSame($choices, array_map('intval', PreferenceDraft::where('student_id', $student->id)->firstOrFail()->choices));
+        Mail::assertSent(PreferenceSubmissionCodeMail::class, 2);
+        $secondCode = Mail::sent(PreferenceSubmissionCodeMail::class)->last()->code;
+        $this->assertNotSame($firstCode, $secondCode);
+        $this->postJson('/api/apply/confirm', ['code' => $firstCode])
+            ->assertUnprocessable()
+            ->assertJsonPath('error', 'invalid_code');
+        Process::assertNotRan(fn() => true);
+    }
+
+    public function test_expired_preference_confirmation_can_be_restarted_from_the_saved_draft(): void
+    {
+        $this->seed();
+        $student = Student::where('code', 'S001')->firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
+        $choices = University::query()->orderBy('id')->limit(3)->pluck('id')->map(fn($id) => (int) $id)->all();
+        Sanctum::actingAs($student);
+        Mail::fake();
+        Process::fake();
+
+        $this->putJson('/api/application/draft', ['choices' => $choices])->assertOk();
+        $this->postJson('/api/apply', ['choices' => $choices])->assertOk();
+        $expiredSubmission = PendingPreferenceSubmission::where('student_id', $student->id)->firstOrFail();
+        $expiredSubmission->update(['expires_at' => now()->subMinute()]);
+
+        $this->postJson('/api/apply', ['choices' => $choices])
+            ->assertOk()
+            ->assertJsonPath('confirmationRequired', true);
+
+        $replacement = PendingPreferenceSubmission::where('student_id', $student->id)->firstOrFail();
+        $this->assertNotSame($expiredSubmission->id, $replacement->id);
+        $this->assertTrue($replacement->expires_at->isFuture());
+        $this->assertSame($choices, array_map('intval', $replacement->choices));
+        $this->assertSame($choices, array_map('intval', PreferenceDraft::where('student_id', $student->id)->firstOrFail()->choices));
+        $this->assertDatabaseMissing('applications', ['student_id' => $student->id]);
+        Mail::assertSent(PreferenceSubmissionCodeMail::class, 2);
+        Process::assertNotRan(fn() => true);
+    }
+
+    public function test_preference_submission_is_not_accepted_when_mailer_only_logs(): void
+    {
+        $this->seed();
+        $student = Student::where('code', 'S001')->firstOrFail();
+        $student->update(['email' => 'student.current@example.test']);
+        Sanctum::actingAs($student);
+        config(['mail.default' => 'log']);
+        $this->app->detectEnvironment(fn() => 'local');
+        Mail::fake();
+
+        $choices = University::query()->orderBy('id')->limit(3)->pluck('id')->map(fn($id) => (int) $id)->all();
+        $this->putJson('/api/application/draft', ['choices' => $choices])->assertOk();
+        $this->postJson('/api/apply', ['choices' => $choices])
+            ->assertServiceUnavailable()
+            ->assertJsonPath('error', 'email_delivery_unconfigured');
+
+        $this->assertDatabaseMissing('pending_preference_submissions', ['student_id' => $student->id]);
+        Mail::assertNothingSent();
     }
 
     public function test_resubmission_preserves_the_existing_hedera_receipt(): void
@@ -319,6 +725,394 @@ class UniversitySelectionTest extends TestCase
             'id' => $application->id,
             'receipt_consensus_timestamp' => '1700000000.000000001',
         ]);
+    }
+
+    public function test_admin_run_anchors_shared_commitment_hashes_and_verifier_reads_them_back(): void
+    {
+        $this->seed();
+        $demoStudent = \App\Models\Student::where('code', 'S001')->firstOrFail();
+        $application = $this->createDemoApplication($demoStudent);
+        $admin = $demoStudent;
+        $admin->update(['is_admin' => true]);
+        Sanctum::actingAs($admin->fresh());
+        config(['services.hedera.demo_mode' => true]);
+        Process::fake(['*' => Process::sequence([
+            $this->processReceipt(81),
+            $this->processReceipt(82),
+            $this->processReceipt(83),
+        ])]);
+
+        $this->postJson('/api/admin/run')->assertOk();
+
+        $this->assertSame(3, Commitment::count());
+        $this->assertDatabaseHas('commitments', [
+            'kind' => 'rules',
+            'hash' => Insaf::rulesHash(),
+            'hcs_sequence' => 81,
+            'hedera_network' => 'testnet',
+            'hedera_topic_id' => '0.0.123',
+        ]);
+        $this->assertDatabaseHas('commitments', [
+            'kind' => 'merkle_root',
+            'hash' => Insaf::preferencesMerkleRoot(),
+            'hcs_sequence' => 82,
+        ]);
+        $this->assertDatabaseHas('commitments', [
+            'kind' => 'results',
+            'hash' => Insaf::resultsHash(),
+            'hcs_sequence' => 83,
+        ]);
+        Process::assertRanTimes(
+            fn($process) => in_array('send.js', (array) $process->command, true),
+            3
+        );
+
+        Http::fake(fn($request) => $this->mirrorResponseForSequence(
+            (int) basename(parse_url($request->url(), PHP_URL_PATH))
+        ));
+        $this->getJson('/api/commitments/verify')
+            ->assertOk()
+            ->assertJsonPath('commitments.0.status', 'verified')
+            ->assertJsonPath('commitments.1.status', 'verified')
+            ->assertJsonPath('commitments.2.status', 'verified')
+            ->assertJsonPath('commitments.0.hashscanUrl', 'https://hashscan.io/testnet/transaction/0.0.123@1700000000.000000081')
+            ->assertJsonMissingPath('commitments.0.choices')
+            ->assertJsonMissingPath('commitments.0.salt');
+    }
+
+    public function test_commitment_verifier_reports_data_changes_after_demo_tampering(): void
+    {
+        $this->seed();
+        $student = \App\Models\Student::where('code', 'S001')->firstOrFail();
+        $application = $this->createDemoApplication($student);
+        Insaf::place();
+        $storedHashes = $this->createPlacementCommitments();
+
+        $originalChoices = array_map('intval', $application->choices);
+        $changedChoices = array_merge(array_slice($originalChoices, 1), [$originalChoices[0]]);
+        $changedPlacement = collect($changedChoices)
+            ->first(fn($id) => (int) $id !== (int) $application->placed_university_id);
+        $application->update([
+            'choices' => $changedChoices,
+            'commitment' => Insaf::commit($student->code, $changedChoices, $application->salt),
+            'placed_university_id' => $changedPlacement,
+            'placed_program_id' => University::find($changedPlacement)?->specialty_id,
+        ]);
+
+        Http::fake(fn($request) => $this->mirrorResponseForSequence(
+            (int) basename(parse_url($request->url(), PHP_URL_PATH))
+        ));
+        $response = $this->getJson('/api/commitments/verify')->assertOk();
+
+        $this->assertSame('verified', $response->json('commitments.0.status'));
+        $this->assertSame('data_changed', $response->json('commitments.1.status'));
+        $this->assertSame('data_changed', $response->json('commitments.2.status'));
+        $this->assertSame($storedHashes['merkle_root'], $response->json('commitments.1.storedHash'));
+        $this->assertNotSame($storedHashes['merkle_root'], $response->json('commitments.1.recomputedHash'));
+        $this->assertSame($storedHashes['results'], $response->json('commitments.2.storedHash'));
+        $this->assertNotSame($storedHashes['results'], $response->json('commitments.2.recomputedHash'));
+    }
+
+    public function test_commitment_verifier_marks_older_runs_superseded_and_verifies_latest_run(): void
+    {
+        $this->seed();
+        $student = Student::where('code', 'S001')->firstOrFail();
+        $application = $this->createDemoApplication($student);
+        Insaf::place();
+
+        $oldHashes = [
+            'rules' => Insaf::rulesHash(),
+            'merkle_root' => Insaf::preferencesMerkleRoot(),
+            'results' => Insaf::resultsHash(),
+        ];
+        foreach ($oldHashes as $index => $hash) {
+            $this->createStoredCommitment($index, $hash, 201 + count(Commitment::all()));
+        }
+
+        $changedChoices = array_reverse(array_map('intval', $application->choices));
+        $application->update([
+            'choices' => $changedChoices,
+            'commitment' => Insaf::commit($student->code, $changedChoices, $application->salt),
+        ]);
+        Insaf::place();
+
+        $latestHashes = [
+            'rules' => Insaf::rulesHash(),
+            'merkle_root' => Insaf::preferencesMerkleRoot(),
+            'results' => Insaf::resultsHash(),
+        ];
+        foreach ($latestHashes as $index => $hash) {
+            $this->createStoredCommitment($index, $hash, 204 + (count(Commitment::all()) - 3));
+        }
+
+        Http::fake(fn($request) => $this->mirrorResponseForSequence(
+            (int) basename(parse_url($request->url(), PHP_URL_PATH))
+        ));
+        $response = $this->getJson('/api/commitments/verify')->assertOk();
+
+        $this->assertSame(
+            ['verified', 'verified', 'verified', 'superseded', 'superseded', 'superseded'],
+            array_column($response->json('commitments'), 'status')
+        );
+        $response->assertJsonPath(
+            'commitments.0.rawRecordUrl',
+            'https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.123/messages/204'
+        );
+        Http::assertSentCount(3);
+
+        $listed = $this->getJson('/api/commitments')->assertOk()->json();
+        $this->assertSame('current', $listed[0]['status']);
+        $this->assertSame('superseded', $listed[3]['status']);
+    }
+
+    public function test_latest_commitment_run_detects_tampering_without_flagging_older_runs_as_errors(): void
+    {
+        $this->seed();
+        $student = Student::where('code', 'S001')->firstOrFail();
+        $application = $this->createDemoApplication($student);
+        Insaf::place();
+
+        foreach ([
+            'rules' => Insaf::rulesHash(),
+            'merkle_root' => Insaf::preferencesMerkleRoot(),
+            'results' => Insaf::resultsHash(),
+        ] as $kind => $hash) {
+            $this->createStoredCommitment($kind, $hash, 301 + count(Commitment::all()));
+        }
+
+        $changedChoices = array_reverse(array_map('intval', $application->choices));
+        $application->update([
+            'choices' => $changedChoices,
+            'commitment' => Insaf::commit($student->code, $changedChoices, $application->salt),
+        ]);
+        Insaf::place();
+        foreach ([
+            'rules' => Insaf::rulesHash(),
+            'merkle_root' => Insaf::preferencesMerkleRoot(),
+            'results' => Insaf::resultsHash(),
+        ] as $kind => $hash) {
+            $this->createStoredCommitment($kind, $hash, 304 + count(Commitment::all()) - 3);
+        }
+
+        $tamperedChoices = array_merge(array_slice($changedChoices, 1), [$changedChoices[0]]);
+        $tamperedPlacement = collect($tamperedChoices)
+            ->first(fn($id) => (int) $id !== (int) $application->placed_university_id);
+        $application->update([
+            'choices' => $tamperedChoices,
+            'placed_university_id' => $tamperedPlacement,
+            'placed_program_id' => University::find($tamperedPlacement)?->specialty_id,
+        ]);
+        Http::fake(fn($request) => $this->mirrorResponseForSequence(
+            (int) basename(parse_url($request->url(), PHP_URL_PATH))
+        ));
+
+        $statuses = $this->getJson('/api/commitments/verify')->assertOk()->json('commitments');
+        $this->assertSame(
+            ['verified', 'data_changed', 'data_changed', 'superseded', 'superseded', 'superseded'],
+            array_column($statuses, 'status')
+        );
+    }
+
+    public function test_demo_reset_refuses_when_demo_mode_is_disabled(): void
+    {
+        config(['services.hedera.demo_mode' => false]);
+
+        $this->assertSame(
+            ConsoleCommand::FAILURE,
+            Artisan::call('insaf:demo-reset', ['--force' => true])
+        );
+        $this->assertStringContainsString('DEMO_MODE=true', Artisan::output());
+    }
+
+    public function test_demo_reset_refuses_in_production_even_when_demo_mode_is_enabled(): void
+    {
+        config(['services.hedera.demo_mode' => true]);
+        $this->app->detectEnvironment(fn() => 'production');
+
+        $this->assertSame(
+            ConsoleCommand::FAILURE,
+            Artisan::call('insaf:demo-reset', ['--force' => true])
+        );
+        $this->assertStringContainsString('local/testing', Artisan::output());
+    }
+
+    public function test_demo_reset_only_clears_intended_demo_and_placement_data(): void
+    {
+        $this->seed();
+        config(['services.hedera.demo_mode' => true]);
+        Storage::fake('local');
+
+        $demoStudent = Student::where('code', 'S001')->firstOrFail();
+        $demoApplication = $this->createDemoApplication($demoStudent);
+        $this->prepareReceipt($demoApplication, array_map('intval', $demoApplication->choices));
+        $otherApplication = Application::with('student')
+            ->whereHas('student', fn($query) => $query->where('code', '!=', 'S001'))
+            ->firstOrFail();
+        $otherBefore = $otherApplication->only([
+            'choices',
+            'salt',
+            'commitment',
+            'receipt_hash',
+            'receipt_sequence',
+        ]);
+
+        $firstProgram = Program::firstOrFail();
+        $firstUniversity = University::firstOrFail();
+        Application::query()->update([
+            'placed_program_id' => $firstProgram->id,
+            'placed_university_id' => $firstUniversity->id,
+        ]);
+        Program::query()->update([
+            'admitted' => 1,
+            'cutoff_score' => 75,
+            'cutoff_code' => 'S001',
+        ]);
+        University::query()->update([
+            'admitted' => 1,
+            'cutoff_score' => 75,
+            'cutoff_code' => 'S001',
+        ]);
+
+        $demoPdfPath = 'incident-reports/demo.pdf';
+        $otherPdfPath = 'incident-reports/other.pdf';
+        Storage::disk('local')->put($demoPdfPath, 'demo');
+        Storage::disk('local')->put($otherPdfPath, 'other');
+        $demoReport = IncidentReport::create([
+            'incident_id' => (string) \Illuminate\Support\Str::uuid(),
+            'student_id' => $demoStudent->id,
+            'submission_reference' => 'demo-submission',
+            'original_hash' => str_repeat('a', 64),
+            'current_hash' => str_repeat('b', 64),
+            'status' => 'Pending Review',
+            'report_data' => ['demo' => true],
+            'pdf_path' => $demoPdfPath,
+        ]);
+        $otherReport = IncidentReport::create([
+            'incident_id' => (string) \Illuminate\Support\Str::uuid(),
+            'student_id' => $otherApplication->student_id,
+            'submission_reference' => 'other-submission',
+            'original_hash' => str_repeat('c', 64),
+            'current_hash' => str_repeat('d', 64),
+            'status' => 'Pending Review',
+            'report_data' => ['demo' => false],
+            'pdf_path' => $otherPdfPath,
+        ]);
+        $this->createStoredCommitment('rules', Insaf::rulesHash(), 401);
+        $studentCount = Student::count();
+        $adminStates = Student::pluck('is_admin', 'id')->all();
+
+        $this->assertSame(
+            ConsoleCommand::SUCCESS,
+            Artisan::call('insaf:demo-reset', ['--force' => true])
+        );
+
+        $this->assertDatabaseMissing('applications', ['student_id' => $demoStudent->id]);
+        $this->assertDatabaseHas('incident_reports', ['id' => $otherReport->id]);
+        $this->assertDatabaseMissing('incident_reports', ['id' => $demoReport->id]);
+        $this->assertDatabaseCount('commitments', 0);
+        $this->assertFalse(Storage::disk('local')->exists($demoPdfPath));
+        $this->assertTrue(Storage::disk('local')->exists($otherPdfPath));
+        $this->assertSame($studentCount, Student::count());
+        $this->assertSame($adminStates, Student::pluck('is_admin', 'id')->all());
+        $this->assertSame(
+            $otherBefore,
+            $otherApplication->fresh()->only(array_keys($otherBefore))
+        );
+        $this->assertDatabaseHas('applications', [
+            'id' => $otherApplication->id,
+            'placed_program_id' => null,
+            'placed_university_id' => null,
+        ]);
+        $this->assertDatabaseHas('programs', [
+            'id' => $firstProgram->id,
+            'admitted' => 0,
+            'cutoff_score' => null,
+            'cutoff_code' => null,
+        ]);
+        $this->assertDatabaseHas('universities', [
+            'id' => $firstUniversity->id,
+            'admitted' => 1,
+            'cutoff_score' => 75,
+            'cutoff_code' => 'S001',
+        ]);
+        $this->assertStringContainsString('remain on the topic', Artisan::output());
+    }
+
+    public function test_commitment_verifier_reports_chain_mismatch(): void
+    {
+        $this->seed();
+        $hash = Insaf::rulesHash();
+        $this->createStoredCommitment('rules', $hash, 91);
+        Http::fake(['*' => Http::response([
+            'message' => base64_encode('rules:' . str_repeat('a', 64)),
+            'topic_id' => '0.0.123',
+            'sequence_number' => 91,
+        ])]);
+
+        $this->getJson('/api/commitments/verify')
+            ->assertOk()
+            ->assertJsonPath('commitments.0.status', 'chain_mismatch');
+    }
+
+    public function test_legacy_commitments_fall_back_to_configured_topic_and_raw_mirror_url(): void
+    {
+        $this->seed();
+        $commitment = $this->createStoredCommitment('rules', Insaf::rulesHash(), 90);
+        $commitment->update([
+            'hedera_network' => null,
+            'hedera_topic_id' => null,
+        ]);
+        Http::fake(fn($request) => $this->mirrorResponseForSequence(
+            (int) basename(parse_url($request->url(), PHP_URL_PATH))
+        ));
+
+        $this->getJson('/api/commitments/verify')
+            ->assertOk()
+            ->assertJsonPath('commitments.0.status', 'verified')
+            ->assertJsonPath('commitments.0.network', 'testnet')
+            ->assertJsonPath('commitments.0.topicId', '0.0.123')
+            ->assertJsonPath(
+                'commitments.0.rawRecordUrl',
+                'https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.123/messages/90'
+            );
+    }
+
+    public function test_commitment_verifier_treats_mirror_node_404_as_pending(): void
+    {
+        $this->seed();
+        $this->createStoredCommitment('rules', Insaf::rulesHash(), 92);
+        Http::fake(['*' => Http::response([], 404)]);
+
+        $this->getJson('/api/commitments/verify')
+            ->assertOk()
+            ->assertJsonPath('commitments.0.status', 'pending');
+        Http::assertSentCount(3);
+    }
+
+    public function test_commitment_verifier_reports_mirror_node_errors_as_unavailable(): void
+    {
+        $this->seed();
+        $this->createStoredCommitment('rules', Insaf::rulesHash(), 93);
+        Http::fake(['*' => Http::response([], 503)]);
+
+        $this->getJson('/api/commitments/verify')
+            ->assertOk()
+            ->assertJsonPath('commitments.0.status', 'unavailable');
+    }
+
+    public function test_commitment_verifier_reports_malformed_mirror_node_records_as_unavailable(): void
+    {
+        $this->seed();
+        $this->createStoredCommitment('rules', Insaf::rulesHash(), 94);
+        Http::fake(['*' => Http::response([
+            'message' => '%%%invalid-base64%%%',
+            'topic_id' => '0.0.123',
+            'sequence_number' => 94,
+        ])]);
+
+        $this->getJson('/api/commitments/verify')
+            ->assertOk()
+            ->assertJsonPath('commitments.0.status', 'unavailable');
     }
 
     public function test_verification_reports_a_pending_mirror_node_record_without_marking_it_invalid(): void
@@ -604,6 +1398,43 @@ class UniversitySelectionTest extends TestCase
         ])->assertUnprocessable();
     }
 
+    public function test_student_can_report_incorrect_profile_information_for_admin_review(): void
+    {
+        $this->seed();
+        $student = Student::where('code', 'S001')->firstOrFail();
+        Sanctum::actingAs($student);
+
+        $response = $this->postJson('/api/profile/problem-reports', [
+            'category' => 'name',
+            'message' => 'My displayed full name is incorrect.',
+        ])->assertCreated()
+            ->assertJsonPath('message', 'Your report was sent to the administration for review.');
+
+        $reportId = $response->json('id');
+        $this->assertDatabaseHas('incident_reports', [
+            'incident_id' => $reportId,
+            'student_id' => $student->id,
+            'report_type' => 'student_problem',
+            'status' => 'Pending Review',
+        ]);
+        $this->assertSame([
+            'category' => 'name',
+            'message' => 'My displayed full name is incorrect.',
+        ], IncidentReport::where('incident_id', $reportId)->firstOrFail()->report_data);
+
+        $student->update(['is_admin' => true]);
+        Sanctum::actingAs($student->fresh());
+        $this->getJson('/api/admin/incident-reports')
+            ->assertOk()
+            ->assertJsonPath('data.0.report_type', 'student_problem')
+            ->assertJsonPath('data.0.student.code', $student->code);
+        $this->getJson("/api/admin/incident-reports/{$reportId}")
+            ->assertOk()
+            ->assertJsonPath('reportType', 'student_problem')
+            ->assertJsonPath('report.message', 'My displayed full name is incorrect.');
+        $this->getJson("/api/admin/incident-reports/{$reportId}/pdf")->assertNotFound();
+    }
+
     public function test_incident_submission_does_not_report_success_when_mirror_node_fails(): void
     {
         [$application, $incident] = $this->prepareIncidentSubmission();
@@ -809,6 +1640,56 @@ class UniversitySelectionTest extends TestCase
             ],
             $originalHash,
         ];
+    }
+
+    private function createPlacementCommitments(): array
+    {
+        $hashes = [
+            'rules' => Insaf::rulesHash(),
+            'merkle_root' => Insaf::preferencesMerkleRoot(),
+            'results' => Insaf::resultsHash(),
+        ];
+
+        foreach ($hashes as $index => $hash) {
+            $this->createStoredCommitment($index, $hash, 101 + count(Commitment::all()));
+        }
+
+        return $hashes;
+    }
+
+    private function createStoredCommitment(string $kind, string $hash, int $sequence): Commitment
+    {
+        return Commitment::create([
+            'kind' => $kind,
+            'hash' => $hash,
+            'hcs_tx_id' => '0.0.123@1700000000.' . str_pad((string) $sequence, 9, '0', STR_PAD_LEFT),
+            'hcs_sequence' => $sequence,
+            'hedera_network' => 'testnet',
+            'hedera_topic_id' => '0.0.123',
+        ]);
+    }
+
+    private function processReceipt(int $sequence): \Illuminate\Process\FakeProcessResult
+    {
+        return Process::result(json_encode([
+            'transactionId' => '0.0.123@1700000000.' . str_pad((string) $sequence, 9, '0', STR_PAD_LEFT),
+            'sequence' => $sequence,
+            'topicId' => '0.0.123',
+            'network' => 'testnet',
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    private function mirrorResponseForSequence(int $sequence)
+    {
+        $commitment = Commitment::where('hcs_sequence', $sequence)->firstOrFail();
+
+        return Http::response([
+            'message' => base64_encode($commitment->kind . ':' . $commitment->hash),
+            'topic_id' => '0.0.123',
+            'sequence_number' => $sequence,
+            'consensus_timestamp' => '1700000000.000000001',
+            'transaction_id' => $commitment->hcs_tx_id,
+        ]);
     }
 
     private function prepareReceipt(Application $application, array $choices): void

@@ -238,6 +238,30 @@ class IncidentReportController extends Controller
         ], 201);
     }
 
+    public function storeStudentProblem(Request $request)
+    {
+        $data = $request->validate([
+            'category' => ['required', 'string', 'in:name,institution,score,other'],
+            'message' => ['required', 'string', 'min:10', 'max:5000'],
+        ]);
+
+        $report = IncidentReport::create([
+            'incident_id' => (string) Str::uuid(),
+            'student_id' => $request->user()->id,
+            'report_type' => 'student_problem',
+            'status' => 'Pending Review',
+            'report_data' => [
+                'category' => $data['category'],
+                'message' => trim($data['message']),
+            ],
+        ]);
+
+        return response()->json([
+            'message' => 'Your report was sent to the administration for review.',
+            'id' => $report->incident_id,
+        ], 201);
+    }
+
     public function index()
     {
         return IncidentReport::query()
@@ -247,6 +271,7 @@ class IncidentReportController extends Controller
                 'id',
                 'incident_id',
                 'student_id',
+                'report_type',
                 'submission_reference',
                 'original_hash',
                 'current_hash',
@@ -261,6 +286,7 @@ class IncidentReportController extends Controller
         return [
             'id' => $report->incident_id,
             'studentReference' => $report->student->code,
+            'reportType' => $report->report_type,
             'submissionReference' => $report->submission_reference,
             'originalHash' => $report->original_hash,
             'currentHash' => $report->current_hash,
@@ -274,6 +300,7 @@ class IncidentReportController extends Controller
     public function download(string $incidentId)
     {
         $report = IncidentReport::where('incident_id', $incidentId)->firstOrFail();
+        abort_if(!$report->pdf_path, 404, 'This report does not have an attached PDF.');
         abort_unless(Storage::disk('local')->exists($report->pdf_path), 404, 'Incident PDF not found.');
 
         return Storage::disk('local')->download(

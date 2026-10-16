@@ -4,14 +4,20 @@ namespace App\Http\Controllers;
 
 use App\Models\Application;
 use App\Models\Commitment;
+use App\Models\PendingPreferenceSubmission;
+use App\Models\PreferenceDraft;
 use App\Models\Program;
 use App\Models\Student;
 use App\Models\University;
+use App\Mail\PreferenceSubmissionCodeMail;
 use App\Services\Insaf;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 
 class InsafController extends Controller
@@ -27,13 +33,185 @@ class InsafController extends Controller
     // PUBLIC: everything the ministry anchored on Hedera
     public function commitments()
     {
-        return Commitment::orderBy('id')->get();
+        $latestIds = $this->latestCommitmentIds();
+
+        return $this->orderedCommitments($latestIds)->map(function (Commitment $commitment) use ($latestIds): array {
+            $network = $commitment->hedera_network ?? config('services.hedera.network');
+            $topicId = $commitment->hedera_topic_id ?? config('services.hedera.topic_id');
+            $urls = Insaf::hashscanUrls($network, $topicId, $commitment->hcs_tx_id);
+
+            return [
+                ...$commitment->toArray(),
+                'status' => ($latestIds[$commitment->kind] ?? null) === $commitment->id
+                    ? 'current'
+                    : 'superseded',
+                'hashscanUrl' => $urls['transaction'] ?? $urls['topic'],
+                'rawRecordUrl' => Insaf::mirrorNodeRecordUrl($topicId, (int) $commitment->hcs_sequence),
+            ];
+        });
+    }
+
+    public function verifyCommitments()
+    {
+        $latestIds = $this->latestCommitmentIds();
+        $commitments = $this->orderedCommitments($latestIds)->map(function (Commitment $commitment) use ($latestIds): array {
+            $network = $commitment->hedera_network ?? config('services.hedera.network');
+            $topicId = $commitment->hedera_topic_id ?? config('services.hedera.topic_id');
+            $urls = Insaf::hashscanUrls($network, $topicId, $commitment->hcs_tx_id);
+            $rawRecordUrl = Insaf::mirrorNodeRecordUrl($topicId, (int) $commitment->hcs_sequence);
+            $recomputedHash = null;
+            $anchoredHash = null;
+
+            if (($latestIds[$commitment->kind] ?? null) !== $commitment->id) {
+                return [
+                    'kind' => $commitment->kind,
+                    'network' => $network,
+                    'topicId' => $topicId,
+                    'sequence' => (int) $commitment->hcs_sequence,
+                    'transactionId' => $commitment->hcs_tx_id,
+                    'consensusTimestamp' => null,
+                    'anchoredHash' => null,
+                    'storedHash' => $commitment->hash,
+                    'recomputedHash' => null,
+                    'hashscanUrl' => $urls['transaction'] ?? $urls['topic'],
+                    'topicHashscanUrl' => $urls['topic'],
+                    'rawRecordUrl' => $rawRecordUrl,
+                    'status' => 'superseded',
+                ];
+            }
+
+            if (!in_array($network, ['testnet', 'mainnet'], true) ||
+                $network !== config('services.hedera.network')) {
+                return [
+                    'kind' => $commitment->kind,
+                    'network' => $network,
+                    'topicId' => $topicId,
+                    'sequence' => (int) $commitment->hcs_sequence,
+                    'transactionId' => $commitment->hcs_tx_id,
+                    'consensusTimestamp' => null,
+                    'anchoredHash' => null,
+                    'storedHash' => $commitment->hash,
+                    'recomputedHash' => Insaf::recomputeCommitmentHash($commitment->kind),
+                    'hashscanUrl' => $urls['transaction'] ?? $urls['topic'],
+                    'topicHashscanUrl' => $urls['topic'],
+                    'rawRecordUrl' => $rawRecordUrl,
+                    'status' => 'unavailable',
+                ];
+            }
+
+            try {
+                $recomputedHash = Insaf::recomputeCommitmentHash($commitment->kind);
+                $record = Insaf::readAnchorRecord((int) $commitment->hcs_sequence, $topicId);
+            } catch (ConnectionException|RequestException|\UnexpectedValueException|\RuntimeException $exception) {
+                report($exception);
+
+                return [
+                    'kind' => $commitment->kind,
+                    'network' => $network,
+                    'topicId' => $topicId,
+                    'sequence' => (int) $commitment->hcs_sequence,
+                    'transactionId' => $commitment->hcs_tx_id,
+                    'consensusTimestamp' => null,
+                    'anchoredHash' => null,
+                    'storedHash' => $commitment->hash,
+                    'recomputedHash' => $recomputedHash,
+                    'hashscanUrl' => $urls['transaction'] ?? $urls['topic'],
+                    'topicHashscanUrl' => $urls['topic'],
+                    'rawRecordUrl' => $rawRecordUrl,
+                    'status' => 'unavailable',
+                ];
+            }
+
+            if ($recomputedHash === null) {
+                return [
+                    'kind' => $commitment->kind,
+                    'network' => $network,
+                    'topicId' => $topicId,
+                    'sequence' => (int) $commitment->hcs_sequence,
+                    'transactionId' => $commitment->hcs_tx_id,
+                    'consensusTimestamp' => null,
+                    'anchoredHash' => null,
+                    'storedHash' => $commitment->hash,
+                    'recomputedHash' => null,
+                    'hashscanUrl' => $urls['transaction'] ?? $urls['topic'],
+                    'topicHashscanUrl' => $urls['topic'],
+                    'rawRecordUrl' => $rawRecordUrl,
+                    'status' => 'unavailable',
+                ];
+            }
+
+            if ($record === null) {
+                $status = 'pending';
+            } else {
+                $expectedMessage = "{$commitment->kind}:{$commitment->hash}";
+                $message = $record['message'] ?? '';
+                $chainMatches = is_string($message) && hash_equals($expectedMessage, $message);
+                if (is_string($message) &&
+                    preg_match('/^' . preg_quote($commitment->kind, '/') . ':([a-f0-9]{64})$/i', $message, $matches)) {
+                    $anchoredHash = $matches[1];
+                }
+
+                $status = !$chainMatches
+                    ? 'chain_mismatch'
+                    : (is_string($recomputedHash) && hash_equals($commitment->hash, $recomputedHash)
+                        ? 'verified'
+                        : 'data_changed');
+            }
+
+            return [
+                'kind' => $commitment->kind,
+                'network' => $network,
+                'topicId' => $topicId,
+                'sequence' => (int) $commitment->hcs_sequence,
+                'transactionId' => $record['transaction_id'] ?? $commitment->hcs_tx_id,
+                'consensusTimestamp' => $record['consensus_timestamp'] ?? null,
+                'anchoredHash' => $anchoredHash,
+                'storedHash' => $commitment->hash,
+                'recomputedHash' => $recomputedHash,
+                'hashscanUrl' => $urls['transaction'] ?? $urls['topic'],
+                'topicHashscanUrl' => $urls['topic'],
+                'rawRecordUrl' => $rawRecordUrl,
+                'status' => $status,
+            ];
+        });
+
+        return ['commitments' => $commitments];
+    }
+
+    private function latestCommitmentIds(): array
+    {
+        return Commitment::query()
+            ->selectRaw('kind, MAX(id) AS latest_id')
+            ->groupBy('kind')
+            ->pluck('latest_id', 'kind')
+            ->map(fn($id) => (int) $id)
+            ->all();
+    }
+
+    private function orderedCommitments(array $latestIds)
+    {
+        $kindOrder = ['rules' => 0, 'merkle_root' => 1, 'results' => 2];
+
+        return Commitment::query()->get()
+            ->sortBy(fn(Commitment $commitment) => [
+                ($latestIds[$commitment->kind] ?? null) === $commitment->id ? 0 : 1,
+                $kindOrder[$commitment->kind] ?? 99,
+                -$commitment->id,
+            ])
+            ->values();
     }
 
     public function dashboard(Request $r)
     {
         $student = $r->user()->loadMissing('application.university.specialty');
         $application = $student->application;
+        $pendingSubmission = PendingPreferenceSubmission::where('student_id', $student->id)->first();
+        if ($pendingSubmission?->expires_at->isPast()) {
+            $pendingSubmission->delete();
+            $pendingSubmission = null;
+        }
+        $draft = PreferenceDraft::where('student_id', $student->id)->first();
+        $savedChoices = $draft?->choices ?? $application?->choices ?? [];
         $university = $application?->university;
         $demoApplication = $student->is_admin && $this->demoModeEnabled()
             ? Student::where('code', self::DEMO_STUDENT_CODE)
@@ -65,7 +243,11 @@ class InsafController extends Controller
                 'placed_en' => $university?->name_en,
                 'placed_specialty' => $university?->specialty?->name,
             ],
-            'choices' => array_map('intval', $application?->choices ?? []),
+            'choices' => array_map('intval', $savedChoices),
+            'draftSaved' => $draft !== null,
+            'preferenceConfirmation' => $pendingSubmission ? [
+                'emailHint' => $this->maskEmail($pendingSubmission->email),
+            ] : null,
             'receipt' => $this->receiptData($student, $application)['receipt'],
             'demoModeEnabled' => $student->is_admin && $this->demoModeEnabled(),
             'demoTamperAvailable' => $demoApplication,
@@ -78,7 +260,7 @@ class InsafController extends Controller
             filter_var(config('services.hedera.demo_mode'), FILTER_VALIDATE_BOOLEAN);
     }
 
-    // The ministry and hacker buttons only exist for the demo
+    // Administrator placement and synthetic tampering are restricted to demonstrations.
     private function demoOnly(): void
     {
         abort_unless(
@@ -112,11 +294,57 @@ class InsafController extends Controller
 
     public function application(Request $r)
     {
-        $choices = $r->user()->application?->choices ?? [];
+        $student = $r->user();
+        $draft = PreferenceDraft::where('student_id', $student->id)->first();
+        $choices = $draft?->choices ?? $student->application?->choices ?? [];
 
         return [
             'choices' => array_map('intval', $choices),
         ];
+    }
+
+    public function savePreferenceDraft(Request $r)
+    {
+        $d = $r->validate([
+            'choices' => 'required|array|max:40',
+            'choices.*' => 'integer|distinct|exists:universities,id',
+        ]);
+        $s = $r->user();
+        $choices = array_map('intval', array_values($d['choices']));
+
+        $retiredChoice = University::query()
+            ->whereIn('id', $choices)
+            ->where('location_fr', 'Gabès, Tunisie')
+            ->whereHas('specialty', fn($query) => $query->where('name', 'Médecine'))
+            ->exists();
+        if ($retiredChoice) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'choices' => 'Cette université n’est plus disponible pour les nouveaux choix.',
+            ]);
+        }
+
+        DB::transaction(function () use ($s, $choices): void {
+            $student = Student::query()->whereKey($s->id)->lockForUpdate()->firstOrFail();
+            abort_if(
+                $student->application()->lockForUpdate()->value('receipt_sequence') !== null,
+                409,
+                'Preferences cannot be changed after submission.'
+            );
+
+            $pending = PendingPreferenceSubmission::where('student_id', $student->id)->lockForUpdate()->first();
+            if ($pending?->expires_at->isPast()) {
+                $pending->delete();
+                $pending = null;
+            }
+            abort_if($pending, 409, 'Preferences are locked until email confirmation is completed.');
+
+            PreferenceDraft::updateOrCreate(
+                ['student_id' => $student->id],
+                ['choices' => $choices]
+            );
+        });
+
+        return ['choices' => $choices, 'saved' => true, 'submitted' => false];
     }
 
     public function receipt(Request $r)
@@ -137,6 +365,15 @@ class InsafController extends Controller
             return ['receipt' => null];
         }
 
+        $network = $application->receipt_network ?? config('services.hedera.network');
+        $topicId = $application->receipt_topic_id ?? config('services.hedera.topic_id');
+        $hashscanUrls = Insaf::hashscanUrls(
+            $network,
+            $topicId,
+            $application->receipt_transaction_id
+        );
+        $rawRecordUrl = Insaf::mirrorNodeRecordUrl($topicId, (int) $application->receipt_sequence);
+
         return [
             'receipt' => [
                 'code' => $student->code,
@@ -145,8 +382,11 @@ class InsafController extends Controller
                 'salt' => $application->receipt_salt,
                 'hash' => $application->receipt_hash,
                 'tx' => $application->receipt_transaction_id,
-                'network' => $application->receipt_network ?? config('services.hedera.network'),
-                'topicId' => $application->receipt_topic_id ?? config('services.hedera.topic_id'),
+                'network' => $network,
+                'topicId' => $topicId,
+                'hashscanUrl' => $hashscanUrls['transaction'] ?? $hashscanUrls['topic'],
+                'topicHashscanUrl' => $hashscanUrls['topic'],
+                'rawRecordUrl' => $rawRecordUrl,
                 'sequence' => (int) $application->receipt_sequence,
                 'consensusTimestamp' => $application->receipt_consensus_timestamp,
                 'submittedAt' => $application->receipt_submitted_at->toISOString(),
@@ -157,8 +397,6 @@ class InsafController extends Controller
     // The student submits ranked choices and receives a receipt anchored on Hedera
     public function apply(Request $r)
     {
-        set_time_limit(120);
-
         $d = $r->validate([
             'choices' => 'required|array|min:3',
             'choices.*' => 'integer|distinct|exists:universities,id',
@@ -166,7 +404,6 @@ class InsafController extends Controller
 
         $s = $r->user(); // always the logged-in student, never a code sent by the browser
         $choices = array_map('intval', array_values(array_unique($d['choices'])));
-
         $selectsRetiredMedicineUniversity = University::query()
             ->whereIn('id', $choices)
             ->where('location_fr', 'Gabès, Tunisie')
@@ -178,6 +415,178 @@ class InsafController extends Controller
                 'choices' => 'Cette université n’est plus disponible pour les nouveaux choix.',
             ]);
         }
+
+        if (!filter_var($s->email, FILTER_VALIDATE_EMAIL)) {
+            return response()->json([
+                'error' => 'current_email_unavailable',
+                'message' => 'A valid registered email address is required to confirm your preferences.',
+            ], 422);
+        }
+        if (!app()->environment('testing') && in_array(config('mail.default'), ['log', 'array'], true)) {
+            return response()->json([
+                'error' => 'email_delivery_unconfigured',
+                'message' => 'Email delivery is not configured. Your preferences were not submitted.',
+            ], 503);
+        }
+
+        $key = 'preference-submit:' . $s->id;
+        if (RateLimiter::tooManyAttempts($key, 3)) {
+            return response()->json(['error' => 'too_many', 'message' => 'Too many requests. Try again later.'], 429);
+        }
+        RateLimiter::hit($key, 600);
+
+        $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $pending = DB::transaction(function () use ($s, $choices, $code): PendingPreferenceSubmission {
+            $student = Student::query()->whereKey($s->id)->lockForUpdate()->firstOrFail();
+            $application = $student->application()->lockForUpdate()->first();
+            abort_if(
+                $application?->receipt_sequence !== null,
+                409,
+                'A Hedera receipt already exists for this submission. It cannot be overwritten.'
+            );
+
+            $draft = PreferenceDraft::where('student_id', $student->id)->lockForUpdate()->first();
+            abort_if(
+                $draft === null || $choices !== array_map('intval', $draft->choices),
+                409,
+                'Save your latest preferences before requesting email confirmation.'
+            );
+
+            $existingPending = PendingPreferenceSubmission::where('student_id', $student->id)
+                ->lockForUpdate()
+                ->first();
+            if ($existingPending?->expires_at->isPast()) {
+                $existingPending->delete();
+                $existingPending = null;
+            }
+            abort_if(
+                $existingPending,
+                409,
+                'Preferences are already locked while awaiting email confirmation.'
+            );
+
+            return PendingPreferenceSubmission::create([
+                'student_id' => $student->id,
+                'email' => $s->email,
+                'choices' => $choices,
+                'code_hash' => Hash::make($code),
+                'expires_at' => now()->addMinutes(10),
+                'attempts' => 0,
+            ]);
+        });
+
+        try {
+            Mail::to($pending->email)->send(new PreferenceSubmissionCodeMail($code));
+        } catch (\Throwable $exception) {
+            report($exception);
+            PendingPreferenceSubmission::whereKey($pending->id)
+                ->where('code_hash', $pending->code_hash)
+                ->delete();
+
+            return response()->json([
+                'error' => 'email_delivery_failed',
+                'message' => 'We could not send a confirmation code. Your preferences were not submitted.',
+            ], 503);
+        }
+
+        return [
+            'confirmationRequired' => true,
+            'emailHint' => $this->maskEmail($pending->email),
+            'expiresInMinutes' => 10,
+        ];
+    }
+
+    public function confirmApply(Request $r)
+    {
+        $d = $r->validate(['code' => ['required', 'digits:6']]);
+        $s = $r->user();
+
+        $pending = DB::transaction(function () use ($s, $d): ?PendingPreferenceSubmission {
+            $submission = PendingPreferenceSubmission::where('student_id', $s->id)->lockForUpdate()->first();
+            if (!$submission || $submission->expires_at->isPast() || $submission->attempts >= 5) {
+                return null;
+            }
+            if (!hash_equals((string) $s->email, (string) $submission->email)) {
+                $submission->delete();
+                return null;
+            }
+            if (!Hash::check($d['code'], $submission->code_hash)) {
+                $submission->increment('attempts');
+                return null;
+            }
+
+            return $submission;
+        });
+
+        if (!$pending) {
+            return response()->json([
+                'error' => 'invalid_code',
+                'message' => 'The confirmation code is invalid or expired.',
+            ], 422);
+        }
+
+        $receipt = $this->anchorSubmission($s, array_map('intval', $pending->choices));
+        PreferenceDraft::where('student_id', $s->id)->delete();
+        $pending->delete();
+        RateLimiter::clear('preference-submit:' . $s->id);
+
+        return $receipt;
+    }
+
+    public function resendApplyCode(Request $r)
+    {
+        $s = $r->user();
+        $key = 'preference-submit-resend:' . $s->id;
+        if (RateLimiter::tooManyAttempts($key, 3)) {
+            return response()->json(['error' => 'too_many', 'message' => 'Too many requests. Try again later.'], 429);
+        }
+
+        $pending = PendingPreferenceSubmission::where('student_id', $s->id)->first();
+        if (!$pending || $pending->expires_at->isPast() ||
+            !hash_equals((string) $s->email, (string) $pending->email)) {
+            $pending?->delete();
+            return response()->json([
+                'error' => 'confirmation_expired',
+                'message' => 'The confirmation request expired. Submit your saved preferences again.',
+            ], 409);
+        }
+        RateLimiter::hit($key, 600);
+
+        $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $pending->update([
+            'code_hash' => Hash::make($code),
+            'expires_at' => now()->addMinutes(10),
+            'attempts' => 0,
+        ]);
+
+        try {
+            Mail::to($pending->email)->send(new PreferenceSubmissionCodeMail($code));
+        } catch (\Throwable $exception) {
+            report($exception);
+            return response()->json([
+                'error' => 'email_delivery_failed',
+                'message' => 'We could not send a confirmation code. Your preferences remain locked.',
+            ], 503);
+        }
+
+        return [
+            'emailHint' => $this->maskEmail($pending->email),
+            'expiresInMinutes' => 10,
+        ];
+    }
+
+    private function maskEmail(string $email): string
+    {
+        [$localPart, $domain] = explode('@', $email, 2);
+
+        return substr($localPart, 0, 1) .
+            str_repeat('*', max(2, min(6, strlen($localPart) - 1))) .
+            '@' . $domain;
+    }
+
+    private function anchorSubmission(Student $s, array $choices): array
+    {
+        set_time_limit(120);
 
         [$salt, $hash, $a, $submittedAt] = DB::transaction(function () use ($s, $choices): array {
             $student = Student::query()->whereKey($s->id)->lockForUpdate()->firstOrFail();
@@ -213,6 +622,12 @@ class InsafController extends Controller
 
             return [$salt, $hash, $anchor, $submittedAt];
         });
+        $hashscanUrls = Insaf::hashscanUrls(
+            $a['network'],
+            $a['topicId'],
+            $a['transactionId']
+        );
+        $rawRecordUrl = Insaf::mirrorNodeRecordUrl($a['topicId'], (int) $a['sequence']);
 
         return [
             'code' => $s->code,
@@ -224,6 +639,8 @@ class InsafController extends Controller
             'network' => $a['network'],
             'topicId' => $a['topicId'],
             'sequence' => (int) $a['sequence'],
+            'hashscanUrl' => $hashscanUrls['transaction'] ?? $hashscanUrls['topic'],
+            'rawRecordUrl' => $rawRecordUrl,
             'consensusTimestamp' => null,
             'submittedAt' => $submittedAt->toISOString(),
         ];
@@ -235,23 +652,11 @@ class InsafController extends Controller
         $this->demoOnly();
         set_time_limit(180);
 
-        $rules = json_encode([
-            'formula' => 'score desc, tie by code asc, first university choice with a free seat',
-            'capacities' => University::orderBy('id')->pluck('capacity', 'id'),
-        ]);
-        $this->commit('rules', hash('sha256', $rules));
-
-        $leaves = Application::with('student')->get()
-            ->map(fn($a) => Insaf::commit($a->student->code, $a->choices, $a->salt))->all();
-        $this->commit('merkle_root', Insaf::merkleRoot($leaves));
+        $this->commit('rules', Insaf::rulesHash());
+        $this->commit('merkle_root', Insaf::preferencesMerkleRoot());
 
         Insaf::place();
-
-        $res = Application::with('student')->orderBy('id')->get()
-            ->map(fn($a) => $a->student->code . ':' . $a->placed_university_id)->implode(',');
-        $cut = University::orderBy('id')->get()
-            ->map(fn($u) => "{$u->id}:{$u->admitted}:{$u->cutoff_score}:{$u->cutoff_code}")->implode(',');
-        $this->commit('results', hash('sha256', $res . '|' . $cut));
+        $this->commit('results', Insaf::resultsHash());
 
         return Commitment::orderBy('id')->get();
     }
@@ -264,6 +669,8 @@ class InsafController extends Controller
             'hash' => $hash,
             'hcs_tx_id' => $a['transactionId'],
             'hcs_sequence' => $a['sequence'],
+            'hedera_network' => $a['network'],
+            'hedera_topic_id' => $a['topicId'],
         ]);
     }
 
@@ -288,11 +695,14 @@ class InsafController extends Controller
         $before = array_map('intval', $a->choices);
         $originalChoices = array_map('intval', $a->receipt_choices);
         $after = array_merge(array_slice($originalChoices, 1), [$originalChoices[0]]);
+        $tamperedPlacement = collect($after)
+            ->first(fn($universityId) => (int) $universityId !== (int) $a->placed_university_id)
+            ?? $after[0];
         $a->update([
             'choices' => $after,
             'commitment' => Insaf::commit($demoStudent->code, $after, $a->salt),
-            'placed_university_id' => $after[0],
-            'placed_program_id' => University::find($after[0])?->specialty_id,
+            'placed_university_id' => $tamperedPlacement,
+            'placed_program_id' => University::find($tamperedPlacement)?->specialty_id,
         ]);
 
         return [
@@ -309,6 +719,10 @@ class InsafController extends Controller
                 'tx' => $a->receipt_transaction_id,
                 'network' => $a->receipt_network ?? config('services.hedera.network'),
                 'topicId' => $a->receipt_topic_id ?? config('services.hedera.topic_id'),
+                'rawRecordUrl' => Insaf::mirrorNodeRecordUrl(
+                    $a->receipt_topic_id ?? config('services.hedera.topic_id'),
+                    (int) $a->receipt_sequence
+                ),
             ],
         ];
     }
