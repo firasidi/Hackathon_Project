@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Application;
 use App\Models\Program;
+use App\Models\University;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 
@@ -56,10 +57,19 @@ class Insaf
     // Read a message back from Hedera's public Mirror Node
     public static function readAnchor(int $seq): ?string
     {
+        return self::readAnchorRecord($seq)['message'] ?? null;
+    }
+
+    public static function readAnchorRecord(int $seq): ?array
+    {
         $topic = env('HEDERA_TOPIC_ID');
         for ($i = 0; $i < 4; $i++) {
             $res = Http::get("https://testnet.mirrornode.hedera.com/api/v1/topics/{$topic}/messages/{$seq}");
-            if ($res->ok()) return base64_decode($res->json('message'));
+            if ($res->ok()) {
+                $record = $res->json();
+                $record['message'] = base64_decode($record['message'] ?? '', true) ?: '';
+                return $record;
+            }
             sleep(2); // the Mirror Node can lag a few seconds
         }
         return null;
@@ -68,8 +78,8 @@ class Insaf
     // Placement: highest score first, each student gets their best choice with a free seat
     public static function place(): void
     {
-        $programs = Program::all();
-        $left = $programs->pluck('capacity', 'id')->all();
+        $universities = University::all();
+        $left = $universities->pluck('capacity', 'id')->all();
         $last = [];
 
         $apps = Application::with('student')->get()->all();
@@ -78,21 +88,25 @@ class Insaf
 
         foreach ($apps as $a) {
             $placed = null;
-            foreach ($a->choices as $pid) {
-                if (($left[$pid] ?? 0) > 0) {
-                    $left[$pid]--;
-                    $placed = $pid;
-                    $last[$pid] = $a->student; // the last admitted defines the cut-off
+            foreach ($a->choices as $universityId) {
+                if (($left[$universityId] ?? 0) > 0) {
+                    $left[$universityId]--;
+                    $placed = $universityId;
+                    $last[$universityId] = $a->student; // the last admitted defines the cut-off
                     break;
                 }
             }
-            $a->update(['placed_program_id' => $placed]);
+            $university = $placed ? $universities->firstWhere('id', $placed) : null;
+            $a->update([
+                'placed_program_id' => $university?->specialty_id,
+                'placed_university_id' => $placed,
+            ]);
         }
 
-        foreach ($programs as $p) {
-            $s = $last[$p->id] ?? null;
-            $p->update([
-                'admitted'     => $p->capacity - $left[$p->id],
+        foreach ($universities as $university) {
+            $s = $last[$university->id] ?? null;
+            $university->update([
+                'admitted'     => $university->capacity - $left[$university->id],
                 'cutoff_score' => $s?->score,
                 'cutoff_code'  => $s?->code,
             ]);

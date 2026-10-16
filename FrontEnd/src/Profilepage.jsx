@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import api from "./api";
-import { Toggles } from "./Layout";
+import { LanguageToggle, Toggles } from "./Layout";
 import "./Login.css";
 import "./Profile.css";
 
@@ -97,7 +97,7 @@ function ReadOnly({ label, value, rtl, locked }) {
   );
 }
 
-export default function ProfilePage({ lang, dark, toggleTheme, profile, onSaved }) {
+export default function ProfilePage({ lang, setLang, dark, toggleTheme, profile, onSaved }) {
   const t = tr[lang];
 
   const [email, setEmail] = useState(profile?.email ?? "");
@@ -169,7 +169,10 @@ export default function ProfilePage({ lang, dark, toggleTheme, profile, onSaved 
     <div className="ins-content-card">
       <div className="ins-card-head">
         <span>{t.title}</span>
-        <div className="ins-badge">{t.badge}</div>
+        <div className="ins-profile-header-actions">
+          <div className="ins-badge">{t.badge}</div>
+          <LanguageToggle lang={lang} setLang={setLang} className="ins-profile-lang-toggle" />
+        </div>
       </div>
 
       {/* Official information, read-only */}
@@ -241,7 +244,7 @@ export default function ProfilePage({ lang, dark, toggleTheme, profile, onSaved 
         <p className="ins-text">🔒 {t.privacyText}</p>
       </section>
 
-      <Toggles lang={lang} dark={dark} onTheme={toggleTheme} />
+      <Toggles lang={lang} setLang={setLang} dark={dark} onTheme={toggleTheme} showLanguage={false} />
     </div>
   );
 }

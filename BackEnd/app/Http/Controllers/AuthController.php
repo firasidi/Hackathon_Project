@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Mail\ResetCodeMail;
 use App\Models\ResetCode;
 use App\Models\Student;
 use Illuminate\Http\Request;
@@ -24,6 +25,7 @@ class AuthController extends Controller
             'email' => $s->email,
             'phone' => $s->phone,
             'city' => $s->city,
+            'is_admin' => $s->is_admin,
         ];
     }
 
@@ -72,7 +74,7 @@ class AuthController extends Controller
             $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
             ResetCode::where('student_id', $s->id)->delete();
-            ResetCode::create([
+            $resetCode = ResetCode::create([
                 'student_id' => $s->id,
                 'code_hash' => Hash::make($code),
                 'expires_at' => now()->addMinutes(10),
@@ -80,13 +82,16 @@ class AuthController extends Controller
             ]);
 
             try {
-                Mail::raw(
-                    "Insaf - votre code de vérification : {$code}\n\n" .
-                    "Il expire dans 10 minutes. Si vous n'avez pas demandé ce code, ignorez ce message.",
-                    fn($m) => $m->to($s->email)->subject('Insaf - Code de réinitialisation')
-                );
+                Mail::to($s->email)->send(new ResetCodeMail($code, $s->name_fr));
+                $resetCode->update(['expires_at' => now()->addMinutes(10)]);
             } catch (\Throwable $e) {
-                report($e); // the real error is in storage/logs/laravel.log
+                report($e);
+                ResetCode::where('student_id', $s->id)->delete();
+
+                return response()->json([
+                    'error' => 'email_delivery_failed',
+                    'message' => 'We could not send the reset code. Please try again later.',
+                ], 503);
             }
         }
 

@@ -10,6 +10,7 @@ const L = {
     welcome: "Bienvenue sur Insaf",
     welcomeSub: "Plateforme d'orientation universitaire vérifiable",
     badge: "Hedera Testnet",
+    switchLanguage: "Passer en anglais",
     footer: "Hedera Cross Campus Challenge — données synthétiques uniquement",
     themeTitle: "Changer le thème",
   },
@@ -19,21 +20,40 @@ const L = {
     welcome: "Welcome to Insaf",
     welcomeSub: "Verifiable university placement platform",
     badge: "Hedera Testnet",
+    switchLanguage: "Switch to French",
     footer: "Hedera Cross Campus Challenge — synthetic data only",
     themeTitle: "Switch theme",
   },
 };
 
-// Theme button (top-left of the card). The language switch will be added later.
-export function Toggles({ lang, dark, onTheme }) {
+export function LanguageToggle({ lang, setLang, className = "" }) {
+  const nextLanguage = lang === "fr" ? "en" : "fr";
+
   return (
-    <button className="ins-theme-btn" onClick={onTheme} title={L[lang].themeTitle} type="button">
-      <img
-        src={dark ? sunImg : moonImg}
-        alt={dark ? "Light mode" : "Dark mode"}
-        className="ins-theme-icon"
-      />
+    <button
+      className={`ins-lang-toggle ${className}`.trim()}
+      onClick={() => setLang(nextLanguage)}
+      title={L[lang].switchLanguage}
+      aria-label={L[lang].switchLanguage}
+      type="button"
+    >
+      {nextLanguage.toUpperCase()}
     </button>
+  );
+}
+
+export function Toggles({ lang, setLang, dark, onTheme, showLanguage = true }) {
+  return (
+    <>
+      <button className="ins-theme-btn" onClick={onTheme} title={L[lang].themeTitle} type="button">
+        <img
+          src={dark ? sunImg : moonImg}
+          alt={dark ? "Light mode" : "Dark mode"}
+          className="ins-theme-icon"
+        />
+      </button>
+      {showLanguage && <LanguageToggle lang={lang} setLang={setLang} />}
+    </>
   );
 }
 
@@ -55,7 +75,7 @@ export default function Layout({ lang, dark, children }) {
             <p className="ins-welcome-title">{t.welcome}</p>
             <p className="ins-welcome-sub">{t.welcomeSub}</p>
           </div>
-          <button className="ins-btn-intranet">{t.badge}</button>
+          <button className="ins-btn-intranet" type="button" disabled>{t.badge}</button>
         </div>
       </header>
 

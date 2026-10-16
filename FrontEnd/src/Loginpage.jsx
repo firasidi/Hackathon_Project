@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import api from "./api";
 import Layout, { Toggles } from "./Layout";
 import "./Login.css";
@@ -51,6 +51,7 @@ const tr = {
       pwdShort: "Le mot de passe doit contenir au moins 8 caractères.",
       pwdMismatch: "Les mots de passe ne correspondent pas.",
       network: "Impossible de joindre le serveur. Vérifiez que Laravel est démarré.",
+      emailDelivery: "Le code n'a pas pu être envoyé. Vérifiez la configuration e-mail du serveur et réessayez.",
       generic: "Une erreur est survenue. Réessayez.",
     },
   },
@@ -101,6 +102,7 @@ const tr = {
       pwdShort: "The password must have at least 8 characters.",
       pwdMismatch: "The passwords do not match.",
       network: "Cannot reach the server. Check that Laravel is running.",
+      emailDelivery: "The code could not be sent. Check the server email configuration and try again.",
       generic: "Something went wrong. Try again.",
     },
   },
@@ -109,8 +111,11 @@ const tr = {
 export default function LoginPage({ lang, setLang, dark, toggleTheme, onLogin }) {
   const t = tr[lang];
 
-  const [view, setView] = useState("login"); // login | forgot | reset
-  const [cin, setCin] = useState("");
+  const [view, setView] = useState(() =>
+    window.history.state?.insafScreen === "login" ? window.history.state.loginView ?? "login" : "login"
+  ); // login | forgot | reset
+  const [cin, setCin] = useState("");   // login form
+  const [fcin, setFcin] = useState(""); // forgot/reset flow: always typed by the student
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [code, setCode] = useState("");
@@ -122,12 +127,38 @@ export default function LoginPage({ lang, setLang, dark, toggleTheme, onLogin })
 
   const digits = (v, max) => v.replace(/\D/g, "").slice(0, max);
 
-  const go = (v) => { setView(v); setError(""); };
+  const navigate = (nextView, replace = false) => {
+    const state = { ...window.history.state, insafScreen: "login", loginView: nextView };
+    window.history[replace ? "replaceState" : "pushState"](state, "", window.location.href);
+    setView(nextView);
+    setError("");
+  };
+
+  useEffect(() => {
+    const handlePopState = (event) => {
+      if (event.state?.insafScreen === "login") {
+        setView(event.state.loginView ?? "login");
+        setError("");
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  const goBackToLogin = () => {
+    if (window.history.state?.insafScreen === "login" && window.history.state.loginView !== "login") {
+      window.history.back();
+    } else {
+      navigate("login", true);
+    }
+  };
 
   const explain = (err) => {
     if (!err.response) return t.e.network;
     const { status, data } = err.response;
     if (status === 429) return t.e.tooMany;
+    if (status === 503 && data?.error === "email_delivery_failed") return t.e.emailDelivery;
     if (data?.error === "invalid_credentials") return t.e.badCreds;
     if (data?.error === "invalid_code") return t.e.badCode;
     if (status === 422) return data?.errors?.password ? t.e.pwdShort : t.e.generic;
@@ -154,11 +185,11 @@ export default function LoginPage({ lang, setLang, dark, toggleTheme, onLogin })
 
   const submitForgot = (e) => {
     e.preventDefault();
-    if (cin.length !== 8) return setError(t.e.badCin);
+    if (fcin.length !== 8) return setError(t.e.badCin);
     run(async () => {
-      await api.post("/forgot-password", { cin });
+      await api.post("/forgot-password", { cin: fcin });
       setInfo(t.codeSent);
-      setView("reset");
+      navigate("reset");
     });
   };
 
@@ -169,11 +200,12 @@ export default function LoginPage({ lang, setLang, dark, toggleTheme, onLogin })
     if (newPwd !== newPwd2) return setError(t.e.pwdMismatch);
     run(async () => {
       await api.post("/reset-password", {
-        cin, code, password: newPwd, password_confirmation: newPwd2,
+        cin: fcin, code, password: newPwd, password_confirmation: newPwd2,
       });
       setCode(""); setNewPwd(""); setNewPwd2(""); setPassword("");
+      setCin(fcin); setFcin("");
       setInfo(t.pwdChanged);
-      setView("login");
+      navigate("login", true);
     });
   };
 
@@ -181,7 +213,7 @@ export default function LoginPage({ lang, setLang, dark, toggleTheme, onLogin })
   const badge = view === "login" ? t.loginBadge : view === "forgot" ? t.forgotBadge : t.resetBadge;
 
   return (
-    <Layout lang={lang} dark={dark}>
+    <Layout lang={lang} setLang={setLang} dark={dark}>
       <div className="ins-brand-header">
         <h1 className="ins-main-logo">{t.brand}<span>{t.brandAr}</span></h1>
         <p className="ins-sub-logo">{t.sub}</p>
@@ -226,7 +258,7 @@ export default function LoginPage({ lang, setLang, dark, toggleTheme, onLogin })
               </button>
 
               <div className="ins-links">
-                <button type="button" className="ins-link" onClick={() => { setInfo(""); go("forgot"); }}>
+                <button type="button" className="ins-link" onClick={() => { setInfo(""); setFcin(""); navigate("forgot"); }}>
                   {t.forgot}
                 </button>
               </div>
@@ -241,17 +273,18 @@ export default function LoginPage({ lang, setLang, dark, toggleTheme, onLogin })
 
               <div className="ins-field">
                 <label className="ins-flabel" htmlFor="cin2">{t.cinLabel}</label>
-                <input id="cin2" className="ins-input" inputMode="numeric" placeholder={t.cinPh}
-                  value={cin} onChange={(e) => setCin(digits(e.target.value, 8))} />
+                <input id="cin2" name="forgot-cin" className="ins-input" inputMode="numeric" autoFocus
+                  autoComplete="off" placeholder={t.cinPh}
+                  value={fcin} onChange={(e) => setFcin(digits(e.target.value, 8))} />
               </div>
 
-              <button className="ins-btn ins-btn-full" type="submit" disabled={loading}>
+              <button className="ins-btn ins-btn-full" type="submit" disabled={loading || fcin.length !== 8}>
                 {loading && <span className="ins-spinner" />}
                 {loading ? t.wait : t.sendCode}
               </button>
 
               <div className="ins-links">
-                <button type="button" className="ins-link" onClick={() => go("login")}>{t.back}</button>
+                <button type="button" className="ins-link" onClick={goBackToLogin}>{t.back}</button>
               </div>
             </form>
           )}
@@ -260,6 +293,11 @@ export default function LoginPage({ lang, setLang, dark, toggleTheme, onLogin })
           {view === "reset" && (
             <form onSubmit={submitReset} noValidate>
               <p className="ins-hint">{t.resetText}</p>
+
+              <div className="ins-field">
+                <label className="ins-flabel">{t.cinLabel}</label>
+                <input className="ins-input" value={fcin} readOnly />
+              </div>
 
               <div className="ins-field">
                 <label className="ins-flabel" htmlFor="code">{t.codeLabel}</label>
@@ -292,7 +330,7 @@ export default function LoginPage({ lang, setLang, dark, toggleTheme, onLogin })
           )}
         </div>
 
-        <Toggles lang={lang} dark={dark} onTheme={toggleTheme} />
+        <Toggles lang={lang} setLang={setLang} dark={dark} onTheme={toggleTheme} />
       </div>
     </Layout>
   );

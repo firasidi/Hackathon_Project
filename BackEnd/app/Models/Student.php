@@ -11,7 +11,10 @@ class Student extends Authenticatable
 
     protected $guarded = [];
     protected $hidden = ['password'];
-    protected $casts = ['score' => 'float'];
+    protected $casts = [
+        'score' => 'float',
+        'is_admin' => 'boolean',
+    ];
 
     public function application()
     {
