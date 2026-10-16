@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\IncidentReport;
 use App\Services\Insaf;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -49,7 +51,8 @@ class IncidentReportController extends Controller
             'incident.differences.byRank' => 'present|array',
             'incident.differences.removed' => 'present|array',
             'incident.differences.added' => 'present|array',
-            'incident.hedera' => 'required|array:topicId,sequence,consensusTimestamp,recordReference',
+            'incident.hedera' => 'required|array:network,topicId,sequence,consensusTimestamp,recordReference',
+            'incident.hedera.network' => 'sometimes|nullable|string|in:testnet,mainnet',
             'incident.hedera.topicId' => 'nullable|string|max:40',
             'incident.hedera.sequence' => 'required|integer|min:1',
             'incident.hedera.consensusTimestamp' => 'nullable|string|max:40',
@@ -106,10 +109,30 @@ class IncidentReportController extends Controller
             'The report fingerprints do not match the saved receipt and current application.'
         );
 
-        $anchorRecord = Insaf::readAnchorRecord(
-            (int) $application->receipt_sequence,
-            $application->receipt_topic_id ?? config('services.hedera.topic_id')
-        );
+        try {
+            $anchorRecord = Insaf::readAnchorRecord(
+                (int) $application->receipt_sequence,
+                $application->receipt_topic_id ?? config('services.hedera.topic_id')
+            );
+        } catch (ConnectionException|RequestException $exception) {
+            report($exception);
+            return response()->json([
+                'error' => 'mirror_node_unavailable',
+                'message' => 'The Hedera Mirror Node is temporarily unavailable. The report was not submitted.',
+            ], 503);
+        } catch (\UnexpectedValueException $exception) {
+            report($exception);
+            return response()->json([
+                'error' => 'invalid_mirror_node_record',
+                'message' => 'The Mirror Node returned an invalid record. The report was not submitted.',
+            ], 502);
+        } catch (\RuntimeException $exception) {
+            report($exception);
+            return response()->json([
+                'error' => 'mirror_node_misconfigured',
+                'message' => 'The Hedera Mirror Node configuration is invalid. The report was not submitted.',
+            ], 503);
+        }
         abort_unless(
             $anchorRecord &&
             ($anchorRecord['message'] ?? null) === 'c:' . $originalHash,
@@ -164,6 +187,7 @@ class IncidentReportController extends Controller
                 'added' => array_values(array_diff($currentChoices, $originalChoices)),
             ],
             'hedera' => [
+                'network' => $application->receipt_network ?? config('services.hedera.network'),
                 'topicId' => $anchorRecord['topic_id'] ?? null,
                 'sequence' => $anchorRecord['sequence_number'] ?? $application->receipt_sequence,
                 'consensusTimestamp' => $anchorRecord['consensus_timestamp'] ?? null,
@@ -241,6 +265,7 @@ class IncidentReportController extends Controller
             'originalHash' => $report->original_hash,
             'currentHash' => $report->current_hash,
             'status' => $report->status,
+            'reviewNotes' => $report->review_notes,
             'report' => $report->report_data,
             'createdAt' => $report->created_at?->toISOString(),
         ];
@@ -262,14 +287,20 @@ class IncidentReportController extends Controller
     {
         $data = $request->validate([
             'status' => ['required', 'string', 'in:' . implode(',', self::STATUSES)],
+            'reviewNotes' => ['sometimes', 'nullable', 'string', 'max:5000'],
         ]);
 
         $report = IncidentReport::where('incident_id', $incidentId)->firstOrFail();
-        $report->update(['status' => $data['status']]);
+        $updates = ['status' => $data['status']];
+        if (array_key_exists('reviewNotes', $data)) {
+            $updates['review_notes'] = $data['reviewNotes'];
+        }
+        $report->update($updates);
 
         return [
             'id' => $report->incident_id,
             'status' => $report->status,
+            'reviewNotes' => $report->review_notes,
         ];
     }
 }

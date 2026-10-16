@@ -291,6 +291,7 @@ const downloadIncidentReportPdf = async (incident, universities, lang) => {
   addText(`Added preferences: ${formatIds(differences.added)}`);
 
   addText("Hedera record:", { bold: true, gap: 2 });
+  addText(`Network: ${incident.hedera.network ?? "Unavailable"}`);
   addText(`Topic ID: ${incident.hedera.topicId ?? "Unavailable"}`);
   addText(`Sequence number: ${incident.hedera.sequence ?? "Unavailable"}`);
   addText(`Consensus timestamp: ${incident.hedera.consensusTimestamp ?? "Unavailable"}`);
@@ -384,6 +385,8 @@ const translations = {
     selectIncident: "Select a report to inspect its hashes, status, and PDF.",
     downloadIncidentPdf: "Download incident PDF",
     updateIncidentStatus: "Update status",
+    adminReviewNotes: "Notes d’examen",
+    adminReviewNotesPlaceholder: "Consignez les constatations et les actions de suivi.",
     valid: "Vos vœux sont vérifiés",
     invalid: "Falsification détectée",
     checks: [
@@ -478,6 +481,8 @@ const translations = {
     selectIncident: "Select a report to inspect its hashes, status, and PDF.",
     downloadIncidentPdf: "Download incident PDF",
     updateIncidentStatus: "Update status",
+    adminReviewNotes: "Review notes",
+    adminReviewNotesPlaceholder: "Record findings and follow-up actions.",
     valid: "Your preferences are verified",
     invalid: "Tampering detected",
     checks: [
@@ -508,6 +513,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
   const [adminReportsError, setAdminReportsError] = useState("");
   const [selectedAdminReport, setSelectedAdminReport] = useState(null);
   const [adminReportStatus, setAdminReportStatus] = useState("Pending Review");
+  const [adminReportNotes, setAdminReportNotes] = useState("");
   const [adminActionBusy, setAdminActionBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState("");
@@ -606,8 +612,14 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
     setBusy("");
   };
 
-  const toggle = (id) =>
-    setChoices((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
+  const toggle = (id) => {
+    setResult(null);
+    setChoices((currentChoices) =>
+      currentChoices.includes(id)
+        ? currentChoices.filter((choice) => choice !== id)
+        : [...currentChoices, id]
+    );
+  };
 
   const submit = () => act("apply", async () => {
     setResult(null);
@@ -615,8 +627,12 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
     setReceipt(response);
     navigatePage("receipt");
   });
-  const tamper = () => act("tamper", async () => { await api.post(`/admin/tamper/${code}`); });
+  const tamper = () => act("tamper", async () => {
+    setResult(null);
+    await api.post(`/admin/tamper/${code}`);
+  });
   const verify = () => act("verify", async () => {
+    setResult(null);
     setIncidentPdf(null);
     setIncidentSubmission(null);
     setResult((await api.post("/verify", receipt)).data);
@@ -653,6 +669,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
       const response = await api.get(`/admin/incident-reports/${incidentId}`);
       setSelectedAdminReport(response.data);
       setAdminReportStatus(response.data.status);
+      setAdminReportNotes(response.data.reviewNotes ?? "");
     } catch (error) {
       setAdminReportsError(error.response?.data?.message || error.message);
     } finally {
@@ -685,9 +702,13 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
     try {
       const response = await api.patch(
         `/admin/incident-reports/${selectedAdminReport.id}`,
-        { status: adminReportStatus }
+        { status: adminReportStatus, reviewNotes: adminReportNotes }
       );
-      setSelectedAdminReport((report) => ({ ...report, status: response.data.status }));
+      setSelectedAdminReport((report) => ({
+        ...report,
+        status: response.data.status,
+        reviewNotes: response.data.reviewNotes,
+      }));
       setAdminReports((reports) => reports.map((report) =>
         report.incident_id === response.data.id
           ? { ...report, status: response.data.status }
@@ -766,7 +787,7 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                     <div><dt>Student/submission reference</dt><dd>{selectedAdminReport.studentReference} / {selectedAdminReport.submissionReference}</dd></div>
                     <div><dt>Original SHA-256</dt><dd>{selectedAdminReport.originalHash}</dd></div>
                     <div><dt>Current SHA-256</dt><dd>{selectedAdminReport.currentHash}</dd></div>
-                    <div><dt>Hedera topic / sequence</dt><dd>{selectedAdminReport.report.hedera.topicId ?? "-"} / {selectedAdminReport.report.hedera.sequence ?? "-"}</dd></div>
+                    <div><dt>Hedera network / topic / sequence</dt><dd>{selectedAdminReport.report.hedera.network ?? "-"} / {selectedAdminReport.report.hedera.topicId ?? "-"} / {selectedAdminReport.report.hedera.sequence ?? "-"}</dd></div>
                     <div><dt>Consensus timestamp</dt><dd>{selectedAdminReport.report.hedera.consensusTimestamp ?? "-"}</dd></div>
                     <div><dt>Hedera record reference</dt><dd>{selectedAdminReport.report.hedera.recordReference ?? "-"}</dd></div>
                     <div><dt>Original receipt reference</dt><dd>{selectedAdminReport.report.originalReceiptReference.transactionId ?? "-"} / {selectedAdminReport.report.originalReceiptReference.sequence}</dd></div>
@@ -791,6 +812,16 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
                       <option>Confirmed</option>
                       <option>False Alarm</option>
                     </select>
+                  </label>
+                  <label className="ins-admin-status-control">
+                    {t.adminReviewNotes}
+                    <textarea
+                      value={adminReportNotes}
+                      onChange={(event) => setAdminReportNotes(event.target.value)}
+                      placeholder={t.adminReviewNotesPlaceholder}
+                      maxLength={5000}
+                      rows={4}
+                    />
                   </label>
                   <div className="ins-print-actions">
                     <button className="ins-btn" type="button" disabled={adminActionBusy} onClick={saveAdminIncidentStatus}>
@@ -1097,12 +1128,13 @@ export default function Dashboard({ lang, setLang, dark, toggleTheme, session, o
             </div>
           </section>
 
-          {/* 2. Hacker */}
-          <section className="ins-section">
-            <h2 className="ins-section-title">{t.s3}</h2>
-            <p className="ins-text">{t.s3Text}</p>
-            <button className="ins-btn danger" disabled={!!busy} onClick={tamper}>{t.tamper}</button>
-          </section>
+          {profile?.is_admin && (
+            <section className="ins-section">
+              <h2 className="ins-section-title">{t.s3}</h2>
+              <p className="ins-text">{t.s3Text}</p>
+              <button className="ins-btn danger" disabled={!!busy} onClick={tamper}>{t.tamper}</button>
+            </section>
+          )}
 
           {/* 3. Verify */}
           <section className="ins-section">

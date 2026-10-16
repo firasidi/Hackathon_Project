@@ -28,11 +28,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/verify', [InsafController::class, 'verify']);
     Route::post('/incident-reports', [IncidentReportController::class, 'store']);
 
-    // Demo-only buttons (ministry run and hacker); they also need DEMO_MODE=true
-    Route::post('/admin/run', [InsafController::class, 'run']);
-    Route::post('/admin/tamper/{code}', [InsafController::class, 'tamper']);
-
     Route::middleware('administrator')->prefix('admin')->group(function () {
+        // These demo actions are additionally restricted by the controller to local/testing.
+        Route::post('/run', [InsafController::class, 'run']);
+        Route::post('/tamper/{code}', [InsafController::class, 'tamper']);
         Route::get('/incident-reports', [IncidentReportController::class, 'index']);
         Route::get('/incident-reports/{incidentId}', [IncidentReportController::class, 'show']);
         Route::get('/incident-reports/{incidentId}/pdf', [IncidentReportController::class, 'download']);

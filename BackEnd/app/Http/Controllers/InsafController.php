@@ -11,6 +11,7 @@ use App\Services\Insaf;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class InsafController extends Controller
@@ -148,6 +149,7 @@ class InsafController extends Controller
 
         $s = $r->user(); // always the logged-in student, never a code sent by the browser
         $choices = array_map('intval', array_values(array_unique($d['choices'])));
+
         $selectsRetiredMedicineUniversity = University::query()
             ->whereIn('id', $choices)
             ->where('location_fr', 'Gabès, Tunisie')
@@ -160,27 +162,40 @@ class InsafController extends Controller
             ]);
         }
 
-        $salt = bin2hex(random_bytes(16));
-        $hash = Insaf::commit($s->code, $choices, $salt);
-        $a = Insaf::anchor('c:' . $hash);
-        $submittedAt = now();
+        [$salt, $hash, $a, $submittedAt] = DB::transaction(function () use ($s, $choices): array {
+            $student = Student::query()->whereKey($s->id)->lockForUpdate()->firstOrFail();
+            $application = $student->application()->lockForUpdate()->first();
 
-        Application::updateOrCreate(['student_id' => $s->id], [
-            'choices' => $choices,
-            'salt' => $salt,
-            'commitment' => $hash,
-            'receipt_choices' => $choices,
-            'receipt_salt' => $salt,
-            'receipt_hash' => $hash,
-            'receipt_transaction_id' => $a['transactionId'],
-            'receipt_network' => $a['network'],
-            'receipt_topic_id' => $a['topicId'],
-            'receipt_consensus_timestamp' => null,
-            'receipt_sequence' => (int) $a['sequence'],
-            'receipt_submitted_at' => $submittedAt,
-            'placed_program_id' => null,
-            'placed_university_id' => null,
-        ]);
+            abort_if(
+                $application?->receipt_sequence !== null,
+                409,
+                'A Hedera receipt already exists for this submission. It cannot be overwritten.'
+            );
+
+            $salt = bin2hex(random_bytes(16));
+            $hash = Insaf::commit($student->code, $choices, $salt);
+            $anchor = Insaf::anchor('c:' . $hash);
+            $submittedAt = now();
+
+            Application::updateOrCreate(['student_id' => $student->id], [
+                'choices' => $choices,
+                'salt' => $salt,
+                'commitment' => $hash,
+                'receipt_choices' => $choices,
+                'receipt_salt' => $salt,
+                'receipt_hash' => $hash,
+                'receipt_transaction_id' => $anchor['transactionId'],
+                'receipt_network' => $anchor['network'],
+                'receipt_topic_id' => $anchor['topicId'],
+                'receipt_consensus_timestamp' => null,
+                'receipt_sequence' => (int) $anchor['sequence'],
+                'receipt_submitted_at' => $submittedAt,
+                'placed_program_id' => null,
+                'placed_university_id' => null,
+            ]);
+
+            return [$salt, $hash, $anchor, $submittedAt];
+        });
 
         return [
             'code' => $s->code,
@@ -323,6 +338,12 @@ class InsafController extends Controller
                 'error' => 'invalid_mirror_node_record',
                 'message' => 'The Mirror Node returned an invalid record. Verification was not completed.',
             ], 502);
+        } catch (\RuntimeException $e) {
+            report($e);
+            return response()->json([
+                'error' => 'mirror_node_misconfigured',
+                'message' => 'The Hedera Mirror Node configuration is invalid. Verification was not completed.',
+            ], 503);
         }
 
         if ($anchorRecord === null) {

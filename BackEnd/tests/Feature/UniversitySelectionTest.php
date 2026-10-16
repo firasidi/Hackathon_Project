@@ -247,6 +247,50 @@ class UniversitySelectionTest extends TestCase
         );
     }
 
+    public function test_resubmission_preserves_the_existing_hedera_receipt(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $originalReceipt = [
+            'choices' => $application->choices,
+            'salt' => $application->salt,
+            'commitment' => $application->commitment,
+            'receipt_choices' => $application->choices,
+            'receipt_salt' => $application->salt,
+            'receipt_hash' => $application->commitment,
+            'receipt_transaction_id' => '0.0.123@1700000000.000000001',
+            'receipt_network' => 'testnet',
+            'receipt_topic_id' => '0.0.123',
+            'receipt_sequence' => 42,
+            'receipt_submitted_at' => now(),
+        ];
+        $application->update($originalReceipt);
+        Sanctum::actingAs($application->student);
+
+        $choices = University::query()
+            ->whereNotIn('id', $application->choices)
+            ->orderBy('id')
+            ->limit(3)
+            ->pluck('id')
+            ->map(fn($id) => (int) $id)
+            ->all();
+        Process::fake();
+
+        $this->postJson('/api/apply', ['choices' => $choices])
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'A Hedera receipt already exists for this submission. It cannot be overwritten.');
+
+        $application->refresh();
+        $this->assertSame(array_map('intval', $originalReceipt['choices']), array_map('intval', $application->choices));
+        $this->assertSame($originalReceipt['salt'], $application->salt);
+        $this->assertSame($originalReceipt['commitment'], $application->commitment);
+        $this->assertSame($originalReceipt['receipt_transaction_id'], $application->receipt_transaction_id);
+        $this->assertSame($originalReceipt['receipt_network'], $application->receipt_network);
+        $this->assertSame($originalReceipt['receipt_topic_id'], $application->receipt_topic_id);
+        $this->assertSame(42, (int) $application->receipt_sequence);
+        Process::assertNotRan(fn() => true);
+    }
+
     public function test_verification_does_not_require_a_published_merkle_root(): void
     {
         $this->seed();
@@ -319,6 +363,23 @@ class UniversitySelectionTest extends TestCase
         $this->postJson('/api/verify', $this->verificationPayload($application, $choices))
             ->assertStatus(503)
             ->assertJsonPath('error', 'mirror_node_unavailable');
+    }
+
+    public function test_verification_does_not_succeed_when_mirror_node_configuration_is_invalid(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $choices = array_map('intval', $application->choices);
+        $this->prepareReceipt($application, $choices);
+        config(['services.hedera.mirror_node_url' => '']);
+        Sanctum::actingAs($application->student);
+
+        $this->postJson('/api/verify', $this->verificationPayload($application, $choices))
+            ->assertStatus(503)
+            ->assertJsonPath('error', 'mirror_node_misconfigured')
+            ->assertJsonMissingPath('valid');
+
+        Http::assertNothingSent();
     }
 
     public function test_verification_rejects_a_mirror_node_record_from_a_different_topic(): void
@@ -518,6 +579,7 @@ class UniversitySelectionTest extends TestCase
             ->assertOk()
             ->assertJsonPath('originalHash', $originalHash)
             ->assertJsonPath('report.currentHash', $incident['currentHash'])
+            ->assertJsonPath('report.hedera.network', 'testnet')
             ->assertJsonPath('report.originalReceiptReference.sequence', 42);
 
         $this->get("/api/admin/incident-reports/{$incident['id']}/pdf")
@@ -525,12 +587,38 @@ class UniversitySelectionTest extends TestCase
             ->assertHeader('content-type', 'application/pdf');
 
         $this->patchJson("/api/admin/incident-reports/{$incident['id']}", [
-            'status' => 'Confirmed',
-        ])->assertOk()->assertJsonPath('status', 'Confirmed');
+            'status' => 'Under Investigation',
+            'reviewNotes' => 'Compare the saved receipt with the university submission log.',
+        ])->assertOk()
+            ->assertJsonPath('status', 'Under Investigation')
+            ->assertJsonPath('reviewNotes', 'Compare the saved receipt with the university submission log.');
+        $this->assertDatabaseHas('incident_reports', [
+            'incident_id' => $incident['id'],
+            'status' => 'Under Investigation',
+            'review_notes' => 'Compare the saved receipt with the university submission log.',
+        ]);
 
         $this->patchJson("/api/admin/incident-reports/{$incident['id']}", [
             'status' => 'Arbitrary status',
         ])->assertUnprocessable();
+    }
+
+    public function test_incident_submission_does_not_report_success_when_mirror_node_fails(): void
+    {
+        [$application, $incident] = $this->prepareIncidentSubmission();
+        Storage::fake('local');
+        Http::fake(['*' => Http::response([], 503)]);
+        Sanctum::actingAs($application->student);
+
+        $this->post('/api/incident-reports', [
+            'incident' => json_encode($incident, JSON_THROW_ON_ERROR),
+            'pdf' => UploadedFile::fake()->createWithContent('incident.pdf', "%PDF-1.4\n%%EOF"),
+        ], ['Accept' => 'application/json'])
+            ->assertStatus(503)
+            ->assertJsonPath('error', 'mirror_node_unavailable');
+
+        $this->assertDatabaseCount('incident_reports', 0);
+        Http::assertSentCount(1);
     }
 
     public function test_incident_submission_rejects_invalid_json_metadata(): void
@@ -555,6 +643,52 @@ class UniversitySelectionTest extends TestCase
         $this->app->detectEnvironment(fn() => 'production');
 
         $this->postJson("/api/admin/tamper/{$application->student->code}")->assertForbidden();
+    }
+
+    public function test_demo_actions_require_an_administrator_and_remain_available_in_testing_demo_mode(): void
+    {
+        $this->seed();
+        $application = Application::with('student')->firstOrFail();
+        $student = $application->student;
+        $previousEnv = getenv('DEMO_MODE');
+        $previousEnvValue = $_ENV['DEMO_MODE'] ?? null;
+        $hadEnvValue = array_key_exists('DEMO_MODE', $_ENV);
+        $previousServerValue = $_SERVER['DEMO_MODE'] ?? null;
+        $hadServerValue = array_key_exists('DEMO_MODE', $_SERVER);
+        putenv('DEMO_MODE=true');
+        $_ENV['DEMO_MODE'] = 'true';
+        $_SERVER['DEMO_MODE'] = 'true';
+        $this->app->detectEnvironment(fn() => 'testing');
+
+        try {
+            Sanctum::actingAs($student);
+            $this->postJson('/api/admin/run')->assertForbidden();
+            $this->postJson("/api/admin/tamper/{$student->code}")->assertForbidden();
+
+            $student->update(['is_admin' => true]);
+            Sanctum::actingAs($student->fresh());
+            $this->postJson("/api/admin/tamper/{$student->code}")
+                ->assertOk()
+                ->assertJson(['tampered' => true]);
+        } finally {
+            if ($previousEnv === false) {
+                putenv('DEMO_MODE');
+            } else {
+                putenv('DEMO_MODE=' . $previousEnv);
+            }
+
+            if ($hadEnvValue) {
+                $_ENV['DEMO_MODE'] = $previousEnvValue;
+            } else {
+                unset($_ENV['DEMO_MODE']);
+            }
+
+            if ($hadServerValue) {
+                $_SERVER['DEMO_MODE'] = $previousServerValue;
+            } else {
+                unset($_SERVER['DEMO_MODE']);
+            }
+        }
     }
 
     private function prepareIncidentSubmission(): array
@@ -607,6 +741,7 @@ class UniversitySelectionTest extends TestCase
                     'added' => array_values(array_diff($currentChoices, $originalChoices)),
                 ],
                 'hedera' => [
+                    'network' => 'testnet',
                     'topicId' => '0.0.123',
                     'sequence' => 42,
                     'consensusTimestamp' => '1700000000.000000001',
